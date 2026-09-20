@@ -52,7 +52,7 @@ streamlit run app.py
 
 ```toml
 GEMINI_API_KEY = "実際のGemini APIキー"
-GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_MODEL = "gemini-3.5-flash-lite"
 ```
 
 `secrets.toml` はGitHubへアップロードしないでください。このプロジェクトの `.gitignore` では除外設定済みです。
@@ -65,15 +65,18 @@ GEMINI_MODEL = "gemini-3.5-flash"
 
 ```toml
 GEMINI_API_KEY = "実際のGemini APIキー"
-GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_MODEL = "gemini-3.5-flash-lite"
 ```
 
 4. 保存後にアプリを再起動します。
 
 ## 注意事項
 
-- 初期設定の `gemini-3.5-flash` は、Googleが無料枠を提供している間は無料枠内で利用できます。
-- 3工程でAPIを3回呼ぶため、無料枠の利用回数・トークン上限を消費します。
+- 初期設定の `gemini-3.5-flash-lite` は、Googleが無料枠を提供している間は無料枠内で利用できます。
+- 混雑時は自動再試行し、解消しない場合は別の無料モデルへ切り替えます。
+- 長い本文を前半・後半に分けて生成し、途中で止まっても完成済み部分を保持します。
+- 途中停止後は「途中から再開する」で、未完成部分だけを生成できます。
+- 各工程でAPIを呼ぶため、無料枠の利用回数・トークン上限を消費します。
 - 無料枠の上限に達した場合は生成が停止します。時間をおいて再実行してください。
 - 有料請求を設定しない限り、このアプリから自動的に有料枠へ切り替わることはありません。
 - 無料枠では入力・出力がGoogle製品の改善に利用される場合があります。患者様・お客様の氏名、住所、症例などの個人情報は入力しないでください。

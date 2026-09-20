@@ -1,5 +1,6 @@
 import os
-from typing import Optional
+import time
+from typing import Callable, Optional
 
 import streamlit as st
 from google import genai
@@ -14,6 +15,8 @@ SYSTEM_PROMPT = """あなたは月間100万PV規模のメディアを支援す�
 医療・健康・法律・金融などの重要分野では診断や保証をせず、必要に応じて専門家への相談を促してください。
 出力は指定された内容だけを日本語Markdownで返してください。"""
 
+FALLBACK_MODELS = ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
+
 
 def secret_value(name: str) -> Optional[str]:
     """Streamlit Secrets → environment variable の順で設定を読む。"""
@@ -26,76 +29,83 @@ def secret_value(name: str) -> Optional[str]:
     return os.getenv(name)
 
 
-def call_llm(client: genai.Client, model: str, prompt: str, max_output_tokens: int) -> str:
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_PROMPT,
-            max_output_tokens=max_output_tokens,
-            temperature=0.7,
-        ),
-    )
-    result = (response.text or "").strip()
-    if not result:
-        raise RuntimeError("生成結果が空でした。もう一度お試しください。")
-    return result
+def unique_models(preferred_model: str) -> list[str]:
+    return list(dict.fromkeys((preferred_model, *FALLBACK_MODELS)))
 
 
-def analyze_search_intent(client: genai.Client, model: str, keyword: str) -> str:
+def call_llm(
+    client: genai.Client,
+    model: str,
+    prompt: str,
+    max_output_tokens: int,
+    status_callback: Optional[Callable[[str], None]] = None,
+) -> str:
+    """混雑時は指数バックオフで再試行し、解消しなければ無料モデルへ切り替える。"""
+    last_error: Optional[Exception] = None
+
+    for candidate in unique_models(model):
+        if candidate != model and status_callback:
+            status_callback(f"混雑のため、無料モデル「{candidate}」へ自動で切り替えています…")
+
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=candidate,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        max_output_tokens=max_output_tokens,
+                        temperature=0.7,
+                    ),
+                )
+                result = (response.text or "").strip()
+                if not result:
+                    raise RuntimeError("生成結果が空でした。")
+                return result
+            except Exception as exc:
+                last_error = exc
+                error_text = str(exc)
+                overloaded = "503" in error_text or "UNAVAILABLE" in error_text
+                quota_limited = "429" in error_text or "RESOURCE_EXHAUSTED" in error_text
+                model_missing = "404" in error_text or "not found" in error_text.lower()
+
+                if overloaded and attempt < 2:
+                    wait_seconds = 2 ** (attempt + 1)
+                    if status_callback:
+                        status_callback(
+                            f"Geminiが混雑しています。{wait_seconds}秒後に自動で再試行します…"
+                        )
+                    time.sleep(wait_seconds)
+                    continue
+
+                if overloaded or quota_limited or model_missing:
+                    break
+                raise
+
+    if last_error:
+        raise last_error
+    raise RuntimeError("利用可能なモデルが見つかりませんでした。")
+
+
+def analyze_search_intent(client, model, keyword, status_callback=None) -> str:
     return call_llm(
         client,
         model,
         f"""【ステップ1：検索意図の分析】
 対策キーワード：{keyword}
 
-このキーワードで検索する想定読者を具体化し、次の項目を分析してください。
-- 想定読者像
-- 表面的な悩み
-- 本人も言語化しにくい深い悩み
-- 検索直後に知りたいこと
-- 最終的に達成したい状態
-- 検索意図（Know / Do / Go / Buy）
-- 記事で解消すべき不安・疑問
-
-競合記事を実際に閲覧したとは表現しないでください。見出しは「想定読者の悩み」とし、簡潔かつ具体的にまとめてください。""",
+想定読者を具体化し、読者像、表面的な悩み、深い悩み、知りたいこと、達成したい状態、検索意図、記事で解消すべき不安を分析してください。
+競合記事を実際に閲覧したとは表現せず、簡潔かつ具体的にまとめてください。""",
         3000,
+        status_callback,
     )
 
 
-def create_outline(client: genai.Client, model: str, keyword: str, intent: str) -> str:
+def create_outline(client, model, keyword, intent, status_callback=None) -> str:
     return call_llm(
         client,
         model,
         f"""【ステップ2：記事構成の作成】
-対策キーワード：{keyword}
-
-以下の検索意図分析を踏まえてください。
----
-{intent}
----
-
-検索者の疑問が自然な順序で解決する、論理的で網羅的な構成を作成してください。
-条件：
-- SEOタイトル案を1つ作る
-- 導入文で扱う内容を示す
-- H2は5〜8個を目安にする
-- 必要なH2の下にH3を2〜4個置く
-- 見出しだけで記事全体の流れが分かるようにする
-- 同じ内容の重複を避ける
-- 最後は「まとめ」とし、自然な次の行動につなげる
-- Markdownの # / ## / ### を使う
-
-見出しは「記事の構成案」としてください。""",
-        4500,
-    )
-
-
-def write_article(client: genai.Client, model: str, keyword: str, intent: str, outline: str) -> str:
-    return call_llm(
-        client,
-        model,
-        f"""【ステップ3：本文執筆】
 対策キーワード：{keyword}
 
 検索意図分析：
@@ -103,24 +113,94 @@ def write_article(client: genai.Client, model: str, keyword: str, intent: str, o
 {intent}
 ---
 
-確定した構成案：
+検索者の疑問が自然な順序で解決する、論理的で網羅的な構成を作成してください。
+- SEOタイトル案を1つ
+- 導入文で扱う内容
+- H2は5〜8個
+- 必要なH2の下にH3を2〜4個
+- 内容の重複を避ける
+- 最後は「まとめ」
+- Markdownの # / ## / ### を使用
+
+記事構成だけを出力してください。""",
+        4500,
+        status_callback,
+    )
+
+
+def split_outline(outline: str) -> list[str]:
+    """H2単位で構成を前半・後半へ分ける。"""
+    lines = outline.splitlines()
+    h2_indexes = [index for index, line in enumerate(lines) if line.startswith("## ")]
+    if len(h2_indexes) < 2:
+        return [outline]
+
+    prefix = lines[: h2_indexes[0]]
+    sections = []
+    for position, start in enumerate(h2_indexes):
+        end = h2_indexes[position + 1] if position + 1 < len(h2_indexes) else len(lines)
+        sections.append(lines[start:end])
+
+    midpoint = (len(sections) + 1) // 2
+    first_half = "\n".join(prefix + [line for section in sections[:midpoint] for line in section])
+    second_half = "\n".join(line for section in sections[midpoint:] for line in section)
+    return [first_half.strip(), second_half.strip()]
+
+
+def write_article_part(
+    client,
+    model,
+    keyword,
+    intent,
+    full_outline,
+    target_outline,
+    part_number,
+    total_parts,
+    status_callback=None,
+) -> str:
+    first_part = part_number == 1
+    single_part = total_parts == 1
+    length_instruction = "5,000〜8,000字" if single_part else "2,500〜4,000字"
+    opening_instruction = (
+        "SEOタイトルと導入文から書き始めてください。"
+        if first_part
+        else "タイトルと導入文は繰り返さず、指定された最初のH2から書き始めてください。"
+    )
+
+    return call_llm(
+        client,
+        model,
+        f"""【ステップ3：本文執筆（{part_number}/{total_parts}）】
+対策キーワード：{keyword}
+
+検索意図分析：
 ---
-{outline}
+{intent}
 ---
 
-上記の構成を変更せず、日本語の完成原稿を執筆してください。
-執筆条件：
-- SEOタイトル、導入文、すべてのH2・H3、まとめを含める
-- 各見出しではPREP法（結論→理由→具体例→結論）を基本にする
-- PREPのラベルは本文に表示せず、自然な文章にする
-- 初心者にも分かる、やさしく信頼感のある文体にする
-- 対策キーワードと関連語を文脈に沿って自然に使う
-- 冗長な繰り返し、過度な煽り、事実未確認の数値や出典を避ける
-- 目安は5,000〜8,000字。内容の充実を優先する
-- Markdown形式で、そのままブログへ編集・転載しやすくする
+記事全体の構成案：
+---
+{full_outline}
+---
 
-見出しは「完成した本文」としてください。""",
-        16000,
+今回執筆する範囲：
+---
+{target_outline}
+---
+
+今回指定した範囲だけを日本語で執筆してください。
+- {opening_instruction}
+- 指定されたH2・H3を省略しない
+- 各見出しではPREP法を基本にするが、PREPのラベルは表示しない
+- 初心者にも分かる、やさしく信頼感のある文体
+- キーワードと関連語を自然に使用
+- 冗長な繰り返し、過度な煽り、未確認の数値や出典を避ける
+- 今回の文字数は{length_instruction}を目安にする
+- Markdown形式
+
+本文だけを出力してください。""",
+        10000 if single_part else 7000,
+        status_callback,
     )
 
 
@@ -128,6 +208,58 @@ def show_result(title: str, content: str) -> None:
     st.subheader(title)
     with st.container(border=True):
         st.markdown(content)
+
+
+def display_error(exc: Exception) -> None:
+    error_text = str(exc)
+    if "API_KEY_INVALID" in error_text or "401" in error_text or "403" in error_text:
+        st.error("Gemini APIキーを確認してください。認証に失敗しました。")
+    elif "503" in error_text or "UNAVAILABLE" in error_text:
+        st.error("Geminiの混雑が続いています。途中結果は保存しました。「途中から再開する」を押してください。")
+    elif "RESOURCE_EXHAUSTED" in error_text or "429" in error_text:
+        st.error("無料枠の利用上限に達しました。途中結果は保存されています。時間をおいて再開してください。")
+    elif "not found" in error_text.lower() or "404" in error_text:
+        st.error("指定したモデルを利用できません。無料の代替モデルでも生成できませんでした。")
+    else:
+        st.error(f"生成中にエラーが発生しました：{error_text}")
+
+
+def generate_article_parts(client, model, work, progress) -> None:
+    total_parts = len(work["target_outlines"])
+    while len(work["article_parts"]) < total_parts:
+        part_index = len(work["article_parts"])
+        part_number = part_index + 1
+        base_progress = 67 + int((part_index / total_parts) * 30)
+
+        def update_status(message: str) -> None:
+            progress.progress(base_progress, text=message)
+
+        progress.progress(
+            base_progress,
+            text=f"ステップ3/3：本文の{part_number}/{total_parts}を執筆しています…",
+        )
+        article_part = write_article_part(
+            client,
+            model,
+            work["keyword"],
+            work["intent"],
+            work["outline"],
+            work["target_outlines"][part_index],
+            part_number,
+            total_parts,
+            update_status,
+        )
+        work["article_parts"].append(article_part)
+        st.session_state["seo_work"] = work
+
+    article = "\n\n".join(work["article_parts"])
+    st.session_state["seo_result"] = {
+        "keyword": work["keyword"],
+        "intent": work["intent"],
+        "outline": work["outline"],
+        "article": article,
+    }
+    progress.progress(100, text="記事の生成が完了しました。")
 
 
 st.title("SEO記事自動生成")
@@ -144,8 +276,8 @@ with st.sidebar:
     )
     model = st.text_input(
         "使用モデル",
-        value=secret_value("GEMINI_MODEL") or "gemini-3.5-flash",
-        help="利用できるGeminiモデル名を入力してください。",
+        value=secret_value("GEMINI_MODEL") or "gemini-3.5-flash-lite",
+        help="混雑時は別の無料モデルへ自動で切り替わります。",
     )
     if saved_key:
         st.success("保存済みのAPIキーを使用できます。")
@@ -159,48 +291,80 @@ keyword = st.text_input(
 )
 generate = st.button("記事を生成する", type="primary", use_container_width=True)
 
+current_api_key = api_key_input.strip() or saved_key
+model = model.strip()
+
 if generate:
     keyword = keyword.strip()
-    api_key = api_key_input.strip() or saved_key
-    model = model.strip()
-
     if not keyword:
         st.warning("対策キーワードを入力してください。")
         st.stop()
-    if not api_key:
+    if not current_api_key:
         st.error("左側の「Gemini API設定」からAPIキーを入力してください。")
         st.stop()
     if not model:
         st.error("使用モデルを入力してください。")
         st.stop()
 
-    client = genai.Client(api_key=api_key)
+    st.session_state.pop("seo_result", None)
+    st.session_state.pop("seo_work", None)
+    client = genai.Client(api_key=current_api_key)
     progress = st.progress(0, text="ステップ1/3：想定読者の悩みを分析しています…")
 
     try:
-        intent = analyze_search_intent(client, model, keyword)
-        progress.progress(34, text="ステップ2/3：記事の構成案を作成しています…")
-        outline = create_outline(client, model, keyword, intent)
-        progress.progress(67, text="ステップ3/3：PREP法で本文を執筆しています…")
-        article = write_article(client, model, keyword, intent, outline)
-        progress.progress(100, text="記事の生成が完了しました。")
-
-        st.session_state["seo_result"] = {
+        intent = analyze_search_intent(
+            client, model, keyword, lambda message: progress.progress(5, text=message)
+        )
+        work = {
             "keyword": keyword,
             "intent": intent,
-            "outline": outline,
-            "article": article,
+            "outline": "",
+            "target_outlines": [],
+            "article_parts": [],
         }
+        st.session_state["seo_work"] = work
+
+        progress.progress(34, text="ステップ2/3：記事の構成案を作成しています…")
+        outline = create_outline(
+            client, model, keyword, intent, lambda message: progress.progress(40, text=message)
+        )
+        work["outline"] = outline
+        work["target_outlines"] = split_outline(outline)
+        st.session_state["seo_work"] = work
+        generate_article_parts(client, model, work, progress)
     except Exception as exc:
-        error_text = str(exc)
-        if "API_KEY_INVALID" in error_text or "401" in error_text or "403" in error_text:
-            st.error("Gemini APIキーを確認してください。認証に失敗しました。")
-        elif "RESOURCE_EXHAUSTED" in error_text or "429" in error_text:
-            st.error("Gemini無料枠の利用上限に達しました。時間をおいて、もう一度お試しください。料金は発生しません。")
-        elif "not found" in error_text.lower() or "404" in error_text:
-            st.error("指定したモデルを利用できません。左側のモデル名を確認してください。")
-        else:
-            st.error(f"生成中にエラーが発生しました：{error_text}")
+        display_error(exc)
+    finally:
+        client.close()
+
+
+work = st.session_state.get("seo_work")
+if work and "seo_result" not in st.session_state:
+    st.divider()
+    st.caption(f"途中保存：{work['keyword']}")
+    if work.get("intent"):
+        show_result("1. 想定読者の悩み（保存済み）", work["intent"])
+    if work.get("outline"):
+        show_result("2. 記事の構成案（保存済み）", work["outline"])
+    if work.get("article_parts"):
+        show_result("3. ここまで完成した本文", "\n\n".join(work["article_parts"]))
+
+    can_resume = (
+        bool(current_api_key)
+        and bool(model)
+        and bool(work.get("outline"))
+        and len(work.get("article_parts", [])) < len(work.get("target_outlines", []))
+    )
+    if can_resume and st.button("途中から再開する", type="primary", use_container_width=True):
+        client = genai.Client(api_key=current_api_key)
+        progress = st.progress(67, text="保存済みの続きから本文を生成します…")
+        try:
+            generate_article_parts(client, model, work, progress)
+            st.rerun()
+        except Exception as exc:
+            display_error(exc)
+        finally:
+            client.close()
 
 
 if "seo_result" in st.session_state:
