@@ -13,7 +13,14 @@ import streamlit as st
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
-from social_tools import build_media_package, build_voice_demo, generate_social_plan, social_text
+from social_tools import (
+    build_image_package,
+    build_single_video,
+    build_voice_demo,
+    generate_social_plan,
+    package_available_media,
+    social_text,
+)
 
 
 st.set_page_config(page_title="SEO記事自動生成", page_icon="✍️", layout="centered")
@@ -518,9 +525,9 @@ def display_error(exc: Exception) -> None:
     elif "API_KEY_INVALID" in error_text or "401" in error_text or "403" in error_text:
         st.error("Gemini APIキーを確認してください。認証に失敗しました。")
     elif "503" in error_text or "UNAVAILABLE" in error_text:
-        st.error("Geminiの混雑が続いています。途中結果は保存しました。「途中から再開する」を押してください。")
+        st.error("Geminiの混雑が続いています。完成済みの処理は画面内に保持されています。時間をおいて、未完成の処理だけ再開してください。")
     elif "RESOURCE_EXHAUSTED" in error_text or "429" in error_text:
-        st.error("無料枠の利用上限に達しました。途中結果は保存されています。時間をおいて再開してください。")
+        st.error("無料枠の利用上限に達しました。完成済みの処理は画面内に保持されています。上限の回復後、未完成の処理だけ再開してください。")
     elif "not found" in error_text.lower() or "404" in error_text:
         st.error("指定したモデルを利用できません。無料の代替モデルでも生成できませんでした。")
     else:
@@ -961,65 +968,119 @@ def render_social_tab(
         key="download_social_text",
     )
 
+    st.divider()
+    st.subheader("画像・動画の作成")
     st.info(
-        "次のボタンで、カルーセル9枚、各SNSの投稿画像・表紙・サムネイル、ナレーション・BGM付きMP4を一括作成します。数分かかる場合があります。"
+        "無料枠を無駄にしないよう、画像と3種類の動画を別々に作成します。"
+        "完成した素材はその都度保持されるため、エラー後は未完成のボタンだけ押してください。"
     )
-    st.caption(
-        "ナレーションにはGemini TTSプレビューモデルを使用します。利用可否・料金・回数制限はGoogle AI Studioのアカウント設定により異なります。"
-    )
-    if st.button(
-        "画像と動画を一括作成する",
-        type="primary",
-        use_container_width=True,
-        key="build_social_media",
-    ):
-        if not current_api_key:
-            st.error("左側の「Gemini API設定」からAPIキーを入力してください。")
-            st.stop()
-        if use_professional_ai and not pollinations_api_key:
-            st.error("左側の「高品質イラスト設定」からPollinations APIキーを入力してください。")
-            st.stop()
-        client = genai.Client(api_key=current_api_key)
-        with st.status("SNS画像・動画を作成しています…", expanded=True) as status:
-            try:
-                media = build_media_package(
-                    client,
-                    plan,
-                    brand_name.strip(),
-                    voice,
-                    lambda message: status.write(message),
-                    pollinations_api_key or "",
-                    use_professional_ai,
-                )
-                st.session_state["social_media"] = media
-                status.update(label="すべての画像・動画が完成しました", state="complete")
-            except Exception as exc:
-                status.update(label="画像・動画の作成を完了できませんでした", state="error")
-                display_error(exc)
-            finally:
-                client.close()
 
-    media = st.session_state.get("social_media")
-    if not media:
+    media = st.session_state.setdefault("social_media", {})
+    image_keys = {
+        "carousel_zip", "facebook_image", "x_image", "threads_image", "gbp_image",
+        "reel_cover", "youtube_thumbnail", "tiktok_cover",
+    }
+    images_complete = image_keys.issubset(media)
+    if images_complete:
+        st.success("① 投稿画像は完成済みです。再生成する必要はありません。")
+    else:
+        if st.button(
+            "① 投稿画像を作成する",
+            type="primary",
+            use_container_width=True,
+            key="build_social_images",
+        ):
+            if use_professional_ai and not pollinations_api_key:
+                st.error("左側の「高品質イラスト設定」からPollinations APIキーを入力してください。")
+                st.stop()
+
+            def save_image_asset(key: str, value: object) -> None:
+                current_media = st.session_state.setdefault("social_media", {})
+                current_media[key] = value
+
+            with st.status("SNS投稿画像を作成しています…", expanded=True) as status:
+                try:
+                    build_image_package(
+                        plan,
+                        brand_name.strip(),
+                        lambda message: status.write(message),
+                        pollinations_api_key or "",
+                        use_professional_ai,
+                        save_image_asset,
+                    )
+                    status.update(label="すべての投稿画像が完成しました", state="complete")
+                    st.rerun()
+                except Exception as exc:
+                    status.update(label="画像作成を途中で停止しました", state="error")
+                    display_error(exc)
+
+    st.caption(
+        "動画ナレーションにはGemini TTSプレビューモデルを使用します。"
+        "無料枠では、3本を同じ日に作れない場合があります。1本ずつ作成してください。"
+    )
+    video_options = (
+        ("reel", "reel_video", "② Instagramリール動画"),
+        ("youtube", "youtube_video", "③ YouTube動画"),
+        ("tiktok", "tiktok_video", "④ TikTok動画"),
+    )
+    for platform, asset_key, label in video_options:
+        if asset_key in media:
+            st.success(f"{label}は完成済みです。")
+            continue
+        if st.button(
+            f"{label}を作成する",
+            use_container_width=True,
+            key=f"build_{platform}_video",
+        ):
+            if not current_api_key:
+                st.error("左側の「Gemini API設定」からAPIキーを入力してください。")
+                st.stop()
+            client = genai.Client(api_key=current_api_key)
+            with st.status(f"{label}を作成しています…", expanded=True) as status:
+                try:
+                    saved_key, video_data = build_single_video(
+                        client,
+                        plan,
+                        platform,
+                        brand_name.strip(),
+                        voice,
+                        lambda message: status.write(message),
+                        media.get("_illustration_pngs"),
+                    )
+                    st.session_state.setdefault("social_media", {})[saved_key] = video_data
+                    status.update(label=f"{label}が完成しました", state="complete")
+                    st.rerun()
+                except Exception as exc:
+                    status.update(label=f"{label}を完成できませんでした", state="error")
+                    display_error(exc)
+                finally:
+                    client.close()
+
+    media = st.session_state.get("social_media", {})
+    downloadable_keys = image_keys | {"reel_video", "youtube_video", "tiktok_video"}
+    completed_count = sum(key in media for key in downloadable_keys)
+    if not completed_count:
         return
 
-    st.success("投稿素材が完成しました。")
+    st.subheader("完成済み素材のダウンロード")
+    st.caption(f"現在 {completed_count}/{len(downloadable_keys)} 種類が完成しています。未完成でもZIPで保存できます。")
     st.download_button(
-        "全SNS素材をまとめてZIPでダウンロード",
-        data=media["all_zip"],
-        file_name="social_media_package.zip",
+        "現在完成している素材をZIPでダウンロード",
+        data=package_available_media(plan, media),
+        file_name="social_media_package_partial.zip",
         mime="application/zip",
         use_container_width=True,
-        key="download_all_social_media",
+        key="download_available_social_media",
     )
-    st.download_button(
-        "Instagramカルーセル9枚をダウンロード",
-        data=media["carousel_zip"],
-        file_name="instagram_carousel_9.zip",
-        mime="application/zip",
-        use_container_width=True,
-        key="download_carousel_media",
-    )
+    if media.get("carousel_zip"):
+        st.download_button(
+            "Instagramカルーセル9枚をダウンロード",
+            data=media["carousel_zip"],
+            file_name="instagram_carousel_9.zip",
+            mime="application/zip",
+            use_container_width=True,
+            key="download_carousel_media",
+        )
     image_assets = (
         ("x_image", "X投稿画像（1200×675px）", "x_post_1200x675.png"),
         ("facebook_image", "Facebookアイキャッチ画像（1200×630px）", "facebook_eyecatch_1200x630.png"),
@@ -1030,6 +1091,8 @@ def render_social_tab(
         ("tiktok_cover", "TikTok表紙（1080×1920px）", "tiktok_cover_1080x1920.png"),
     )
     for key, label, filename in image_assets:
+        if key not in media:
+            continue
         with st.expander(label):
             st.image(media[key], use_container_width=True)
             st.download_button(
@@ -1045,6 +1108,8 @@ def render_social_tab(
         ("youtube_video", "YouTube動画", "youtube_video.mp4"),
         ("tiktok_video", "TikTok動画", "tiktok_video.mp4"),
     ):
+        if key not in media:
+            continue
         st.markdown(f"**{label}**")
         st.video(media[key])
         st.download_button(

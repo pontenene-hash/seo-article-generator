@@ -869,15 +869,40 @@ def social_text(plan: dict) -> str:
     return _social_text(plan)
 
 
-def build_media_package(
-    client,
+def _serialize_illustrations(illustrations: dict[str, Image.Image]) -> dict[str, bytes]:
+    serialized: dict[str, bytes] = {}
+    for visual, image in illustrations.items():
+        buffer = io.BytesIO()
+        image.save(buffer, "PNG")
+        serialized[visual] = buffer.getvalue()
+    return serialized
+
+
+def _deserialize_illustrations(serialized: dict[str, bytes] | None) -> dict[str, Image.Image]:
+    illustrations: dict[str, Image.Image] = {}
+    for visual, image_data in (serialized or {}).items():
+        image = Image.open(io.BytesIO(image_data))
+        image.load()
+        illustrations[visual] = image.convert("RGB")
+    return illustrations
+
+
+def build_image_package(
     plan: dict,
     brand_name: str,
-    voice: str,
     progress: Callable[[str], None],
     pollinations_api_key: str = "",
     use_professional_ai: bool = False,
-) -> dict[str, bytes]:
+    save_asset: Callable[[str, object], None] | None = None,
+) -> dict[str, object]:
+    """画像を作成し、完成した素材をその都度コールバックへ渡す。"""
+    assets: dict[str, object] = {}
+
+    def save(key: str, value: object) -> None:
+        assets[key] = value
+        if save_asset:
+            save_asset(key, value)
+
     illustrations: dict[str, Image.Image] = {}
     if use_professional_ai:
         if not pollinations_api_key:
@@ -887,34 +912,45 @@ def build_media_package(
             pollinations_api_key,
             progress,
         )
+        save("_illustration_pngs", _serialize_illustrations(illustrations))
+
     progress("9枚のカルーセル画像を作成しています…")
     carousel_images, carousel_zip = build_carousel(
         plan["carousel"]["slides"], brand_name, illustrations
     )
+    save("carousel_images", carousel_images)
+    save("carousel_zip", carousel_zip)
+
     progress("Facebook投稿画像を作成しています…")
     facebook_image = build_facebook_image(plan.get("facebook", {}), brand_name, illustrations)
+    save("facebook_image", facebook_image)
+
     progress("各SNSの投稿画像・表紙・サムネイルを作成しています…")
     x_image_data = plan.get("x_image", {})
     x_image = build_platform_image(
         x_image_data.get("title", ""), x_image_data.get("body", ""), 1200, 675, brand_name,
         x_image_data.get("visual", ""), illustrations,
     )
+    save("x_image", x_image)
     threads = plan.get("threads", {})
     threads_image = build_platform_image(
         threads.get("image_title", ""), threads.get("image_body", ""), 1080, 1080, brand_name,
         threads.get("visual", ""), illustrations,
     )
+    save("threads_image", threads_image)
     gbp = plan.get("gbp", {})
     gbp_image = build_platform_image(
         gbp.get("image_title", ""), gbp.get("image_body", ""), 1200, 900, brand_name,
         gbp.get("visual", ""), illustrations,
     )
+    save("gbp_image", gbp_image)
     reel = plan.get("reel", {})
     reel_visual = (reel.get("scenes") or [{}])[0].get("visual", "")
     reel_cover = build_platform_image(
         reel.get("cover_title", ""), reel.get("cover_body", ""), 1080, 1920, brand_name,
         reel_visual, illustrations,
     )
+    save("reel_cover", reel_cover)
     youtube = plan.get("youtube", {})
     youtube_visual = (youtube.get("scenes") or [{}])[0].get("visual", "")
     youtube_thumbnail = build_platform_image(
@@ -926,58 +962,113 @@ def build_media_package(
         youtube_visual,
         illustrations,
     )
+    save("youtube_thumbnail", youtube_thumbnail)
     tiktok = plan.get("tiktok", {})
     tiktok_visual = (tiktok.get("scenes") or [{}])[0].get("visual", "")
     tiktok_cover = build_platform_image(
         tiktok.get("cover_title", ""), tiktok.get("cover_body", ""), 1080, 1920, brand_name,
         tiktok_visual, illustrations,
     )
-    progress("Instagramリール動画のナレーションとMP4を作成しています…")
-    reel_video = build_video(
-        client, plan["reel"]["scenes"], 1080, 1920, brand_name, voice, "instagram_reel.mp4",
-        illustrations,
-    )
-    progress("YouTube動画のナレーションとMP4を作成しています…")
-    youtube_video = build_video(
-        client, plan["youtube"]["scenes"], 1920, 1080, brand_name, voice, "youtube_video.mp4",
-        illustrations,
-    )
-    progress("TikTok動画のナレーションとMP4を作成しています…")
-    tiktok_video = build_video(
-        client, plan["tiktok"]["scenes"], 1080, 1920, brand_name, voice, "tiktok_video.mp4",
-        illustrations,
-    )
+    save("tiktok_cover", tiktok_cover)
+    return assets
 
+
+VIDEO_SETTINGS = {
+    "reel": ("reel_video", 1080, 1920, "instagram_reel.mp4", "Instagramリール"),
+    "youtube": ("youtube_video", 1920, 1080, "youtube_video.mp4", "YouTube"),
+    "tiktok": ("tiktok_video", 1080, 1920, "tiktok_video.mp4", "TikTok"),
+}
+
+
+def build_single_video(
+    client,
+    plan: dict,
+    platform: str,
+    brand_name: str,
+    voice: str,
+    progress: Callable[[str], None],
+    illustration_pngs: dict[str, bytes] | None = None,
+) -> tuple[str, bytes]:
+    """指定した1媒体だけの音声とMP4を作成する。"""
+    if platform not in VIDEO_SETTINGS:
+        raise ValueError("対応していない動画形式です。")
+    asset_key, width, height, filename, label = VIDEO_SETTINGS[platform]
+    progress(f"{label}動画のナレーションとMP4を作成しています…")
+    video = build_video(
+        client,
+        plan[platform]["scenes"],
+        width,
+        height,
+        brand_name,
+        voice,
+        filename,
+        _deserialize_illustrations(illustration_pngs),
+    )
+    return asset_key, video
+
+
+def package_available_media(plan: dict, media: dict[str, object]) -> bytes:
+    """現在完成している素材だけをZIPにまとめる。"""
     text_data = _social_text(plan).encode("utf-8-sig")
     json_data = json.dumps(plan, ensure_ascii=False, indent=2).encode("utf-8")
+    image_files = {
+        "facebook_image": "images/facebook_post_1200x630.png",
+        "x_image": "images/x_post_1200x675.png",
+        "threads_image": "images/threads_post_1080x1080.png",
+        "gbp_image": "images/gbp_post_1200x900.png",
+        "reel_cover": "images/instagram_reel_cover_1080x1920.png",
+        "youtube_thumbnail": "images/youtube_thumbnail_1280x720.png",
+        "tiktok_cover": "images/tiktok_cover_1080x1920.png",
+    }
+    video_files = {
+        "reel_video": "videos/instagram_reel.mp4",
+        "youtube_video": "videos/youtube_video.mp4",
+        "tiktok_video": "videos/tiktok_video.mp4",
+    }
+
     all_buffer = io.BytesIO()
     with zipfile.ZipFile(all_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("social_posts.txt", text_data)
         archive.writestr("social_plan.json", json_data)
-        for index, image_data in enumerate(carousel_images, start=1):
+        for index, image_data in enumerate(media.get("carousel_images", []), start=1):
             archive.writestr(f"carousel/carousel_{index:02d}.png", image_data)
-        archive.writestr("images/facebook_post_1200x630.png", facebook_image)
-        archive.writestr("images/x_post_1200x675.png", x_image)
-        archive.writestr("images/threads_post_1080x1080.png", threads_image)
-        archive.writestr("images/gbp_post_1200x900.png", gbp_image)
-        archive.writestr("images/instagram_reel_cover_1080x1920.png", reel_cover)
-        archive.writestr("images/youtube_thumbnail_1280x720.png", youtube_thumbnail)
-        archive.writestr("images/tiktok_cover_1080x1920.png", tiktok_cover)
-        archive.writestr("videos/instagram_reel.mp4", reel_video)
-        archive.writestr("videos/youtube_video.mp4", youtube_video)
-        archive.writestr("videos/tiktok_video.mp4", tiktok_video)
-    return {
-        "all_zip": all_buffer.getvalue(),
-        "carousel_zip": carousel_zip,
-        "facebook_image": facebook_image,
-        "x_image": x_image,
-        "threads_image": threads_image,
-        "gbp_image": gbp_image,
-        "reel_cover": reel_cover,
-        "youtube_thumbnail": youtube_thumbnail,
-        "tiktok_cover": tiktok_cover,
-        "reel_video": reel_video,
-        "youtube_video": youtube_video,
-        "tiktok_video": tiktok_video,
-        "social_text": text_data,
-    }
+        for key, filename in image_files.items():
+            if media.get(key):
+                archive.writestr(filename, media[key])
+        for key, filename in video_files.items():
+            if media.get(key):
+                archive.writestr(filename, media[key])
+    return all_buffer.getvalue()
+
+
+def build_media_package(
+    client,
+    plan: dict,
+    brand_name: str,
+    voice: str,
+    progress: Callable[[str], None],
+    pollinations_api_key: str = "",
+    use_professional_ai: bool = False,
+) -> dict[str, object]:
+    """従来互換用。一括生成でも完成素材を1つの辞書へ集約する。"""
+    media = build_image_package(
+        plan,
+        brand_name,
+        progress,
+        pollinations_api_key,
+        use_professional_ai,
+    )
+    for platform in VIDEO_SETTINGS:
+        key, video = build_single_video(
+            client,
+            plan,
+            platform,
+            brand_name,
+            voice,
+            progress,
+            media.get("_illustration_pngs"),
+        )
+        media[key] = video
+    media["all_zip"] = package_available_media(plan, media)
+    media["social_text"] = _social_text(plan).encode("utf-8-sig")
+    return media
