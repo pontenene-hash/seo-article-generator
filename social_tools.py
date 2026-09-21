@@ -26,6 +26,36 @@ def _strip_code_fence(text: str) -> str:
     return cleaned.strip()
 
 
+def _load_json_response(raw: str) -> dict:
+    cleaned = _strip_code_fence(raw)
+    candidates = [cleaned]
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(cleaned[start : end + 1])
+    for candidate in candidates:
+        normalized = re.sub(r",\s*([}\]])", r"\1", candidate)
+        try:
+            data = json.loads(normalized)
+            if isinstance(data, dict):
+                return data
+        except json.JSONDecodeError:
+            continue
+    raise json.JSONDecodeError("SNS構成のJSONを解析できません。", cleaned, 0)
+
+
+def _validate_social_plan(data: dict) -> None:
+    required = ("x_posts", "threads", "facebook", "gbp", "carousel", "reel", "youtube", "tiktok")
+    missing = [key for key in required if key not in data]
+    if missing:
+        raise ValueError(f"SNS構成に必要な項目が不足しています：{', '.join(missing)}")
+    if len(data.get("carousel", {}).get("slides", [])) != 9:
+        raise ValueError("カルーセル構成が9枚ではありません。")
+    for key in ("reel", "youtube", "tiktok"):
+        if not data.get(key, {}).get("scenes"):
+            raise ValueError(f"{key}の動画構成がありません。")
+
+
 def generate_social_plan(client, model: str, article: str, call_llm) -> dict:
     prompt = f"""【完成記事からSNS展開素材を作成】
 以下の完成記事だけを情報源として、各SNS向けコンテンツを作成してください。
@@ -45,6 +75,7 @@ def generate_social_plan(client, model: str, article: str, call_llm) -> dict:
 - YouTubeは3〜5分程度の日本語ナレーション
 - 動画のcaptionは画面に表示する短文、narrationは読み上げる自然な文章
 - visualは内容を最もよく表すイラスト種別を、次から1つだけ選ぶ：relax、pain、treatment、exercise、sleep、nutrition、beauty、work、smartphone、checklist、location、conversation、recovery、learning
+- JSONを途中で省略しない。すべての括弧と引用符を必ず閉じる
 - 次のJSON以外は一切出力しない
 
 JSON形式：
@@ -103,14 +134,31 @@ JSON形式：
     "scenes": [{{"caption": "画面表示20文字以内", "narration": "読み上げ文", "visual": "ナレーションを表すイラスト種別"}}]
   }}
 }}"""
-    raw = call_llm(client, model, prompt, 9000)
-    data = json.loads(_strip_code_fence(raw))
-    if len(data.get("carousel", {}).get("slides", [])) != 9:
-        raise ValueError("カルーセル構成を9枚で生成できませんでした。もう一度お試しください。")
-    for key in ("reel", "youtube", "tiktok"):
-        if not data.get(key, {}).get("scenes"):
-            raise ValueError(f"{key}の動画構成を生成できませんでした。")
-    return data
+    last_error: Exception | None = None
+    for attempt in range(2):
+        retry_note = ""
+        if attempt:
+            retry_note = (
+                "\n\n【重要】前回はJSONが不完全でした。文章量を調整してもよいので、"
+                "必ず最後まで閉じた有効なJSONを出力してください。"
+            )
+        raw = call_llm(
+            client,
+            model,
+            prompt + retry_note,
+            16_000,
+            response_mime_type="application/json",
+            temperature=0.3,
+        )
+        try:
+            data = _load_json_response(raw)
+            _validate_social_plan(data)
+            return data
+        except (json.JSONDecodeError, ValueError) as exc:
+            last_error = exc
+    if isinstance(last_error, json.JSONDecodeError):
+        raise last_error
+    raise ValueError(f"SNS構成を完成できませんでした：{last_error}")
 
 
 def _font_path() -> str:

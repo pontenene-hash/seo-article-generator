@@ -24,7 +24,7 @@ SYSTEM_PROMPT = """あなたは月間100万PV規模のメディアを支援す�
 医療・健康・法律・金融などの重要分野では診断や保証をせず、必要に応じて専門家への相談を促してください。
 事実確認できない情報は絶対に出力しないでください。入力内に根拠が提示されていない具体的な数値、割合、統計、調査結果、研究結果、引用、日付、制度内容、専門家名、組織名、商品仕様、効果の保証を作ってはいけません。
 確実性を判断できない情報は、推測やそれらしい表現で補わず、文章から完全に除外してください。架空の出典・事例・体験談も禁止します。
-出力は指定された内容だけを日本語Markdownで返してください。"""
+通常は指定された内容だけを日本語Markdownで返してください。JSON形式を指定された場合は、Markdownやコードフェンスを付けず、有効なJSONだけを返してください。"""
 
 FALLBACK_MODELS = ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
 MAX_PAGE_CHARS = 18_000
@@ -52,6 +52,8 @@ def call_llm(
     prompt: str,
     max_output_tokens: int,
     status_callback: Optional[Callable[[str], None]] = None,
+    response_mime_type: Optional[str] = None,
+    temperature: float = 0.7,
 ) -> str:
     """混雑時は指数バックオフで再試行し、解消しなければ無料モデルへ切り替える。"""
     last_error: Optional[Exception] = None
@@ -68,7 +70,8 @@ def call_llm(
                     config=types.GenerateContentConfig(
                         system_instruction=SYSTEM_PROMPT,
                         max_output_tokens=max_output_tokens,
-                        temperature=0.7,
+                        temperature=temperature,
+                        response_mime_type=response_mime_type,
                     ),
                 )
                 result = (response.text or "").strip()
