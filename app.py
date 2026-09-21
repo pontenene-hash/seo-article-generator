@@ -507,7 +507,12 @@ def show_result(title: str, content: str) -> None:
 
 def display_error(exc: Exception) -> None:
     error_text = str(exc)
-    if "API_KEY_INVALID" in error_text or "401" in error_text or "403" in error_text:
+    if "legacy Interactions API schema" in error_text:
+        st.error(
+            "音声生成ライブラリが古い状態です。更新済みのrequirements.txtを含む全ファイルを"
+            "再配置し、Streamlitアプリを再起動してください。"
+        )
+    elif "API_KEY_INVALID" in error_text or "401" in error_text or "403" in error_text:
         st.error("Gemini APIキーを確認してください。認証に失敗しました。")
     elif "503" in error_text or "UNAVAILABLE" in error_text:
         st.error("Geminiの混雑が続いています。途中結果は保存しました。「途中から再開する」を押してください。")

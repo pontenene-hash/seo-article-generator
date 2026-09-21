@@ -283,6 +283,10 @@ def _tts_pcm(client, narration: str, voice: str) -> bytes:
     audio = interaction.output_audio
     if not audio or not audio.data:
         raise RuntimeError("ナレーション音声を生成できませんでした。")
+    # google-genai 2.xでは音声データがBase64文字列として返ります。
+    # 将来のSDK差異でbytesが返る場合も、そのまま受け取れるようにします。
+    if isinstance(audio.data, bytes):
+        return audio.data
     return base64.b64decode(audio.data)
 
 
