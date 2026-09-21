@@ -13,7 +13,7 @@ import streamlit as st
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
-from social_tools import build_media_package, generate_social_plan, social_text
+from social_tools import build_media_package, build_voice_demo, generate_social_plan, social_text
 
 
 st.set_page_config(page_title="SEO記事自動生成", page_icon="✍️", layout="centered")
@@ -790,12 +790,47 @@ def render_social_tab(current_api_key: Optional[str], model: str) -> None:
             key="social_brand_name",
         )
     with col2:
+        voice_descriptions = {
+            "Sulafat": "温かく落ち着いた声",
+            "Achird": "親しみやすく自然な声",
+            "Aoede": "明るくやわらかな声",
+            "Kore": "はっきりした信頼感のある声",
+            "Puck": "軽快で元気な声",
+        }
         voice = st.selectbox(
             "ナレーションの声",
-            ["Sulafat", "Achird", "Aoede", "Kore", "Puck"],
+            list(voice_descriptions),
+            format_func=lambda name: f"{name}｜{voice_descriptions[name]}",
             key="social_voice",
-            help="Sulafatは温かい印象、Achirdは親しみやすい印象です。",
+            help="声を選んだあと、下のボタンで短いデモ音声を試聴できます。",
         )
+
+    demo_col, note_col = st.columns([1, 2])
+    with demo_col:
+        if st.button(
+            "▶ 選んだ声を試聴する",
+            use_container_width=True,
+            key="preview_social_voice",
+        ):
+            if not current_api_key:
+                st.error("左側の「Gemini API設定」からAPIキーを入力してください。")
+            else:
+                client = genai.Client(api_key=current_api_key)
+                try:
+                    with st.spinner(f"{voice}のデモ音声を準備しています…"):
+                        demos = st.session_state.setdefault("voice_demos", {})
+                        if voice not in demos:
+                            demos[voice] = build_voice_demo(client, voice)
+                except Exception as exc:
+                    display_error(exc)
+                finally:
+                    client.close()
+    with note_col:
+        st.caption("同じ声のデモは、この画面を開いている間は再生成せず再利用します。")
+
+    demo_audio = st.session_state.get("voice_demos", {}).get(voice)
+    if demo_audio:
+        st.audio(demo_audio, format="audio/wav")
 
     if st.button(
         "SNS投稿文と動画構成を生成する",

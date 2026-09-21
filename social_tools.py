@@ -44,6 +44,7 @@ def generate_social_plan(client, model: str, article: str, call_llm) -> dict:
 - リールとTikTokは45〜60秒程度の日本語ナレーション
 - YouTubeは3〜5分程度の日本語ナレーション
 - 動画のcaptionは画面に表示する短文、narrationは読み上げる自然な文章
+- visualは内容を最もよく表すイラスト種別を、次から1つだけ選ぶ：relax、pain、treatment、exercise、sleep、nutrition、beauty、work、smartphone、checklist、location、conversation、recovery、learning
 - 次のJSON以外は一切出力しない
 
 JSON形式：
@@ -53,35 +54,38 @@ JSON形式：
     {{"text": "別角度の投稿文", "hashtags": ["#タグ"]}},
     {{"text": "別角度の投稿文", "hashtags": ["#タグ"]}}
   ],
-  "x_image": {{"title": "X投稿画像の見出し", "body": "60文字以内の説明"}},
+  "x_image": {{"title": "X投稿画像の見出し", "body": "60文字以内の説明", "visual": "イラスト種別"}},
   "threads": {{
     "text": "少し長めの投稿文",
     "hashtags": ["#タグ"],
     "image_title": "Threads画像の見出し",
-    "image_body": "60文字以内の説明"
+    "image_body": "60文字以内の説明",
+    "visual": "イラスト種別"
   }},
   "facebook": {{
     "text": "信頼感のある詳しい投稿文",
     "hashtags": ["#タグ"],
     "image_title": "画像に表示する短い見出し",
-    "image_body": "画像に表示する60文字以内の説明"
+    "image_body": "画像に表示する60文字以内の説明",
+    "visual": "イラスト種別"
   }},
   "gbp": {{
     "text": "Googleビジネスプロフィール最新情報の投稿文",
     "image_title": "GBP画像の短い見出し",
-    "image_body": "80文字以内の説明"
+    "image_body": "80文字以内の説明",
+    "visual": "イラスト種別"
   }},
   "carousel": {{
     "caption": "Instagramキャプション",
     "hashtags": ["#タグ"],
-    "slides": [{{"title": "短い見出し", "body": "80文字以内の本文"}}]
+    "slides": [{{"title": "短い見出し", "body": "80文字以内の本文", "visual": "イラスト種別"}}]
   }},
   "reel": {{
     "caption": "Instagramリールキャプション",
     "hashtags": ["#タグ"],
     "cover_title": "リール表紙の短い見出し",
     "cover_body": "短い補足",
-    "scenes": [{{"caption": "画面表示20文字以内", "narration": "読み上げ文"}}]
+    "scenes": [{{"caption": "画面表示20文字以内", "narration": "読み上げ文", "visual": "ナレーションを表すイラスト種別"}}]
   }},
   "youtube": {{
     "title": "YouTubeタイトル",
@@ -89,14 +93,14 @@ JSON形式：
     "hashtags": ["#タグ"],
     "thumbnail_title": "サムネイルの短い見出し",
     "thumbnail_body": "短い補足",
-    "scenes": [{{"caption": "画面見出し", "narration": "読み上げ文"}}]
+    "scenes": [{{"caption": "画面見出し", "narration": "読み上げ文", "visual": "ナレーションを表すイラスト種別"}}]
   }},
   "tiktok": {{
     "caption": "TikTokキャプション",
     "hashtags": ["#タグ"],
     "cover_title": "TikTok表紙の短い見出し",
     "cover_body": "短い補足",
-    "scenes": [{{"caption": "画面表示20文字以内", "narration": "読み上げ文"}}]
+    "scenes": [{{"caption": "画面表示20文字以内", "narration": "読み上げ文", "visual": "ナレーションを表すイラスト種別"}}]
   }}
 }}"""
     raw = call_llm(client, model, prompt, 9000)
@@ -152,6 +156,194 @@ def _gradient(width: int, height: int, top=(239, 250, 247), bottom=(211, 238, 23
     return Image.fromarray(pixels, mode="RGB")
 
 
+def _infer_visual(text: str, hint: str = "") -> str:
+    allowed = {
+        "relax", "pain", "treatment", "exercise", "sleep", "nutrition", "beauty",
+        "work", "smartphone", "checklist", "location", "conversation", "recovery", "learning",
+    }
+    normalized_hint = hint.strip().lower()
+    if normalized_hint in allowed:
+        return normalized_hint
+    rules = (
+        ("pain", ("痛", "こり", "肩", "腰", "膝", "首", "不調", "しびれ")),
+        ("treatment", ("施術", "整体", "鍼灸", "治療", "マッサージ", "ケア")),
+        ("exercise", ("運動", "筋力", "トレーニング", "ストレッチ", "歩行", "リハビリ")),
+        ("sleep", ("睡眠", "眠", "夜", "休息")),
+        ("nutrition", ("食事", "栄養", "食品", "野菜", "ビタミン", "水分")),
+        ("beauty", ("美容", "肌", "フェイシャル", "毛穴", "シミ", "美し")),
+        ("work", ("仕事", "デスク", "パソコン", "会社", "在宅")),
+        ("smartphone", ("スマホ", "携帯", "SNS", "画面")),
+        ("location", ("店舗", "院", "サロン", "アクセス", "予約", "相談", "来店")),
+        ("checklist", ("ポイント", "手順", "確認", "まとめ", "チェック", "方法")),
+        ("conversation", ("家族", "会話", "一緒", "お客様", "専門家")),
+        ("recovery", ("改善", "回復", "元気", "変化", "未来", "予防")),
+        ("learning", ("知識", "原因", "解説", "理由", "仕組み")),
+        ("relax", ("リラックス", "アロマ", "癒", "自律神経", "深呼吸")),
+    )
+    for visual, words in rules:
+        if any(word in text for word in words):
+            return visual
+    return "learning"
+
+
+def _draw_person(draw: ImageDraw.ImageDraw, x: int, y: int, scale: float, pose: str = "stand") -> None:
+    skin = (244, 190, 154, 255)
+    hair = (65, 61, 58, 255)
+    shirt = (71, 153, 139, 255)
+    pants = (70, 91, 111, 255)
+    line = max(5, int(10 * scale))
+    r = int(55 * scale)
+    draw.ellipse((x - r, y - r, x + r, y + r), fill=skin, outline=hair, width=line)
+    draw.pieslice((x - r, y - r, x + r, y + r), 175, 355, fill=hair)
+    shoulder_y = y + int(70 * scale)
+    hip_y = y + int(240 * scale)
+    draw.rounded_rectangle(
+        (x - int(75 * scale), shoulder_y, x + int(75 * scale), hip_y),
+        radius=int(32 * scale), fill=shirt,
+    )
+    if pose == "pain":
+        draw.line((x - int(50 * scale), shoulder_y + int(35 * scale), x + int(35 * scale), y + int(85 * scale)), fill=skin, width=line * 2)
+        draw.line((x + int(55 * scale), shoulder_y + int(30 * scale), x + int(95 * scale), shoulder_y + int(120 * scale)), fill=skin, width=line * 2)
+    elif pose == "cheer":
+        draw.line((x - int(55 * scale), shoulder_y + int(45 * scale), x - int(130 * scale), y - int(10 * scale)), fill=skin, width=line * 2)
+        draw.line((x + int(55 * scale), shoulder_y + int(45 * scale), x + int(130 * scale), y - int(10 * scale)), fill=skin, width=line * 2)
+    else:
+        draw.line((x - int(60 * scale), shoulder_y + int(35 * scale), x - int(95 * scale), hip_y - int(25 * scale)), fill=skin, width=line * 2)
+        draw.line((x + int(60 * scale), shoulder_y + int(35 * scale), x + int(95 * scale), hip_y - int(25 * scale)), fill=skin, width=line * 2)
+    draw.line((x - int(35 * scale), hip_y, x - int(60 * scale), hip_y + int(130 * scale)), fill=pants, width=line * 3)
+    draw.line((x + int(35 * scale), hip_y, x + int(60 * scale), hip_y + int(130 * scale)), fill=pants, width=line * 3)
+
+
+def _draw_scene(visual: str, width: int, height: int) -> Image.Image:
+    canvas = Image.new("RGBA", (1000, 620), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(canvas)
+    accent = (42, 125, 110, 255)
+    pale = (218, 242, 235, 255)
+    coral = (236, 126, 106, 255)
+    gold = (244, 190, 76, 255)
+    dark = (42, 61, 59, 255)
+    blue = (102, 157, 190, 255)
+    draw.ellipse((145, 45, 855, 595), fill=(238, 249, 246, 255))
+
+    if visual == "pain":
+        _draw_person(draw, 500, 170, 0.92, "pain")
+        draw.ellipse((515, 205, 655, 345), outline=coral, width=18)
+        for angle in range(0, 360, 45):
+            x1 = 585 + int(math.cos(math.radians(angle)) * 85)
+            y1 = 275 + int(math.sin(math.radians(angle)) * 85)
+            x2 = 585 + int(math.cos(math.radians(angle)) * 120)
+            y2 = 275 + int(math.sin(math.radians(angle)) * 120)
+            draw.line((x1, y1, x2, y2), fill=coral, width=10)
+    elif visual == "treatment":
+        draw.rounded_rectangle((255, 380, 785, 470), radius=28, fill=accent)
+        draw.line((320, 470, 290, 560), fill=dark, width=18)
+        draw.line((720, 470, 750, 560), fill=dark, width=18)
+        draw.ellipse((350, 300, 450, 400), fill=(244, 190, 154, 255), outline=dark, width=8)
+        draw.rounded_rectangle((430, 325, 720, 410), radius=35, fill=blue)
+        _draw_person(draw, 720, 140, 0.62)
+        draw.line((680, 300, 560, 350), fill=(244, 190, 154, 255), width=18)
+        draw.line((760, 300, 625, 360), fill=(244, 190, 154, 255), width=18)
+    elif visual == "exercise":
+        _draw_person(draw, 500, 150, 0.92, "cheer")
+        draw.line((265, 130, 735, 130), fill=dark, width=18)
+        draw.rounded_rectangle((220, 80, 285, 180), radius=15, fill=coral)
+        draw.rounded_rectangle((715, 80, 780, 180), radius=15, fill=coral)
+        draw.arc((120, 350, 330, 560), 200, 340, fill=gold, width=18)
+        draw.arc((670, 350, 880, 560), 200, 340, fill=gold, width=18)
+    elif visual == "sleep":
+        draw.rounded_rectangle((220, 385, 790, 500), radius=30, fill=blue)
+        draw.rectangle((260, 285, 320, 500), fill=dark)
+        draw.ellipse((300, 325, 410, 430), fill=(244, 190, 154, 255), outline=dark, width=7)
+        draw.rounded_rectangle((395, 350, 725, 445), radius=42, fill=pale)
+        draw.pieslice((570, 65, 790, 285), 55, 290, fill=gold)
+        for x, y in ((230, 120), (410, 90), (825, 190)):
+            draw.regular_polygon((x, y, 18), 4, rotation=45, fill=gold)
+    elif visual == "nutrition":
+        draw.ellipse((260, 140, 740, 590), fill=(255, 255, 255, 255), outline=accent, width=18)
+        draw.ellipse((350, 245, 500, 405), fill=coral)
+        draw.ellipse((490, 220, 650, 390), fill=gold)
+        draw.polygon(((430, 245), (470, 125), (520, 255)), fill=accent)
+        draw.arc((190, 80, 430, 300), 210, 330, fill=accent, width=16)
+        draw.arc((570, 70, 820, 320), 210, 330, fill=accent, width=16)
+    elif visual == "beauty":
+        draw.ellipse((345, 105, 655, 500), fill=(244, 190, 154, 255), outline=dark, width=10)
+        draw.arc((400, 245, 485, 300), 190, 350, fill=dark, width=10)
+        draw.arc((515, 245, 600, 300), 190, 350, fill=dark, width=10)
+        draw.arc((450, 330, 555, 410), 10, 170, fill=coral, width=10)
+        for x, y in ((260, 160), (730, 170), (260, 410), (735, 400)):
+            draw.regular_polygon((x, y, 34), 4, rotation=45, fill=gold)
+    elif visual == "work":
+        _draw_person(draw, 390, 175, 0.65)
+        draw.rounded_rectangle((455, 255, 760, 455), radius=18, fill=blue, outline=dark, width=10)
+        draw.rectangle((535, 455, 680, 490), fill=dark)
+        draw.line((220, 500, 820, 500), fill=accent, width=24)
+        draw.rounded_rectangle((205, 105, 355, 220), radius=18, fill=(255, 255, 255, 255), outline=accent, width=8)
+        draw.line((240, 150, 320, 150), fill=accent, width=10)
+        draw.line((240, 185, 300, 185), fill=accent, width=10)
+    elif visual == "smartphone":
+        draw.rounded_rectangle((365, 70, 635, 550), radius=45, fill=dark)
+        draw.rounded_rectangle((390, 115, 610, 480), radius=20, fill=(255, 255, 255, 255))
+        draw.ellipse((475, 500, 525, 550), fill=pale)
+        for x, y, color in ((445, 190, coral), (545, 190, gold), (445, 300, blue), (545, 300, accent)):
+            draw.rounded_rectangle((x - 40, y - 40, x + 40, y + 40), radius=18, fill=color)
+        for x, y in ((245, 200), (755, 210), (250, 390), (750, 410)):
+            draw.ellipse((x - 35, y - 35, x + 35, y + 35), fill=gold)
+    elif visual == "checklist":
+        draw.rounded_rectangle((285, 80, 715, 560), radius=35, fill=(255, 255, 255, 255), outline=accent, width=16)
+        draw.rounded_rectangle((405, 45, 595, 125), radius=24, fill=accent)
+        for y in (190, 300, 410):
+            draw.rounded_rectangle((345, y, 415, y + 70), radius=12, outline=coral, width=10)
+            draw.line((360, y + 35, 382, y + 55, 410, y + 12), fill=accent, width=10)
+            draw.line((455, y + 22, 650, y + 22), fill=dark, width=12)
+            draw.line((455, y + 55, 600, y + 55), fill=blue, width=9)
+    elif visual == "location":
+        draw.rounded_rectangle((255, 240, 745, 545), radius=25, fill=(255, 255, 255, 255), outline=accent, width=14)
+        draw.polygon(((215, 260), (500, 75), (785, 260)), fill=accent)
+        draw.rectangle((425, 355, 575, 545), fill=blue)
+        draw.rectangle((300, 315, 395, 410), fill=pale)
+        draw.rectangle((605, 315, 700, 410), fill=pale)
+        draw.ellipse((700, 65, 875, 240), fill=coral)
+        draw.polygon(((730, 210), (790, 325), (850, 210)), fill=coral)
+        draw.ellipse((755, 105, 820, 170), fill=(255, 255, 255, 255))
+    elif visual == "conversation":
+        _draw_person(draw, 330, 200, 0.65)
+        _draw_person(draw, 670, 200, 0.65)
+        draw.rounded_rectangle((190, 65, 440, 185), radius=35, fill=(255, 255, 255, 255), outline=accent, width=9)
+        draw.polygon(((370, 175), (420, 225), (405, 170)), fill=accent)
+        draw.rounded_rectangle((560, 65, 810, 185), radius=35, fill=(255, 255, 255, 255), outline=blue, width=9)
+        draw.polygon(((595, 175), (570, 225), (625, 170)), fill=blue)
+    elif visual == "recovery":
+        _draw_person(draw, 500, 180, 0.82, "cheer")
+        draw.arc((185, 40, 815, 585), 205, 335, fill=accent, width=22)
+        draw.polygon(((765, 85), (855, 95), (810, 175)), fill=accent)
+        draw.ellipse((735, 230, 865, 360), fill=gold)
+        for angle in range(0, 360, 45):
+            x1 = 800 + int(math.cos(math.radians(angle)) * 85)
+            y1 = 295 + int(math.sin(math.radians(angle)) * 85)
+            x2 = 800 + int(math.cos(math.radians(angle)) * 115)
+            y2 = 295 + int(math.sin(math.radians(angle)) * 115)
+            draw.line((x1, y1, x2, y2), fill=gold, width=10)
+    elif visual == "relax":
+        _draw_person(draw, 610, 175, 0.72)
+        draw.arc((455, 225, 765, 485), 15, 165, fill=accent, width=12)
+        draw.rounded_rectangle((220, 290, 385, 535), radius=30, fill=blue)
+        draw.rectangle((265, 225, 340, 305), fill=dark)
+        draw.arc((215, 85, 345, 280), 250, 70, fill=coral, width=16)
+        draw.arc((300, 70, 425, 280), 245, 70, fill=gold, width=16)
+        for x, y in ((145, 300), (165, 410), (410, 150)):
+            draw.ellipse((x, y, x + 70, y + 120), fill=pale, outline=accent, width=7)
+    else:
+        draw.polygon(((275, 165), (485, 230), (485, 530), (275, 460)), fill=(255, 255, 255, 255), outline=accent)
+        draw.polygon(((725, 165), (515, 230), (515, 530), (725, 460)), fill=(255, 255, 255, 255), outline=accent)
+        draw.ellipse((405, 25, 595, 215), fill=gold, outline=dark, width=10)
+        draw.rectangle((475, 195, 525, 260), fill=dark)
+        for y in (285, 340, 395):
+            draw.line((315, y, 445, y + 28), fill=blue, width=10)
+            draw.line((555, y + 28, 685, y), fill=blue, width=10)
+
+    return canvas.resize((max(1, width), max(1, height)), Image.Resampling.LANCZOS)
+
+
 def render_card(
     title: str,
     body: str,
@@ -160,6 +352,8 @@ def render_card(
     index: int,
     total: int,
     brand_name: str,
+    illustration_hint: str = "",
+    semantic_text: str = "",
 ) -> Image.Image:
     image = _gradient(width, height)
     draw = ImageDraw.Draw(image)
@@ -179,22 +373,34 @@ def render_card(
         radius=18,
         fill=accent,
     )
-    title_font = _font(max(44, width // 17))
-    body_font = _font(max(30, width // 27))
+    title_font = _font(max(34, min(width // 17, height // 8)))
+    body_font = _font(max(24, min(width // 29, height // 18)))
     small_font = _font(max(22, width // 42))
     usable_width = width - margin * 4
-    title_lines = _wrap(draw, title, title_font, usable_width)[:4]
-    title_y = margin + int(height * 0.12)
+    title_lines = _wrap(draw, title, title_font, usable_width)[:3]
+    title_y = margin + int(height * 0.075)
     for line in title_lines:
         box = draw.textbbox((0, 0), line, font=title_font)
         line_width = box[2] - box[0]
         draw.text(((width - line_width) / 2, title_y), line, fill=accent, font=title_font)
         title_y += int(title_font.size * 1.35)
 
-    divider_y = title_y + int(height * 0.035)
+    divider_y = title_y + int(height * 0.025)
     draw.line((margin * 2, divider_y, width - margin * 2, divider_y), fill=(207, 226, 221), width=3)
-    body_lines = _wrap(draw, body, body_font, usable_width)[:10]
-    body_y = divider_y + int(height * 0.055)
+    footer_y = height - int(margin * 2.0)
+    illustration_top = divider_y + int(height * 0.018)
+    illustration_height = int(height * (0.34 if body else 0.50))
+    illustration_bottom_limit = footer_y - (int(height * 0.14) if body else int(height * 0.02))
+    illustration_height = max(90, min(illustration_height, illustration_bottom_limit - illustration_top))
+    scene = _draw_scene(
+        _infer_visual(f"{title} {body} {semantic_text}", illustration_hint),
+        usable_width,
+        illustration_height,
+    )
+    image.paste(scene, (margin * 2, illustration_top), scene)
+
+    body_lines = _wrap(draw, body, body_font, usable_width)[:4]
+    body_y = illustration_top + illustration_height + int(height * 0.015)
     for line in body_lines:
         box = draw.textbbox((0, 0), line, font=body_font)
         line_width = box[2] - box[0]
@@ -239,6 +445,7 @@ def build_carousel(slides: list[dict], brand_name: str) -> tuple[list[bytes], by
                 index,
                 len(slides),
                 brand_name,
+                slide.get("visual", ""),
             )
             data = _image_bytes(image)
             images.append(data)
@@ -255,6 +462,7 @@ def build_facebook_image(facebook: dict, brand_name: str) -> bytes:
         1,
         1,
         brand_name,
+        facebook.get("visual", ""),
     )
     return _image_bytes(image)
 
@@ -265,8 +473,11 @@ def build_platform_image(
     width: int,
     height: int,
     brand_name: str,
+    illustration_hint: str = "",
 ) -> bytes:
-    return _image_bytes(render_card(title, body, width, height, 1, 1, brand_name))
+    return _image_bytes(
+        render_card(title, body, width, height, 1, 1, brand_name, illustration_hint)
+    )
 
 
 def _tts_pcm(client, narration: str, voice: str) -> bytes:
@@ -297,6 +508,18 @@ def _write_wave(path: Path, pcm: bytes) -> float:
         wav.setframerate(SAMPLE_RATE)
         wav.writeframes(pcm)
     return len(pcm) / (SAMPLE_RATE * 2)
+
+
+def build_voice_demo(client, voice: str) -> bytes:
+    sample = "こんにちは。記事の内容を、やさしく分かりやすくお届けします。"
+    pcm = _tts_pcm(client, sample, voice)
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(SAMPLE_RATE)
+        wav.writeframes(pcm)
+    return buffer.getvalue()
 
 
 def _write_bgm(path: Path, duration: float) -> None:
@@ -361,6 +584,8 @@ def build_video(
                 index,
                 len(scenes),
                 brand_name,
+                scene.get("visual", ""),
+                scene.get("narration", ""),
             )
             image.save(frame_path, "PNG")
             concat_lines.append(f"file '{_safe_concat_path(frame_path)}'")
@@ -455,31 +680,40 @@ def build_media_package(
     progress("各SNSの投稿画像・表紙・サムネイルを作成しています…")
     x_image_data = plan.get("x_image", {})
     x_image = build_platform_image(
-        x_image_data.get("title", ""), x_image_data.get("body", ""), 1200, 675, brand_name
+        x_image_data.get("title", ""), x_image_data.get("body", ""), 1200, 675, brand_name,
+        x_image_data.get("visual", ""),
     )
     threads = plan.get("threads", {})
     threads_image = build_platform_image(
-        threads.get("image_title", ""), threads.get("image_body", ""), 1080, 1080, brand_name
+        threads.get("image_title", ""), threads.get("image_body", ""), 1080, 1080, brand_name,
+        threads.get("visual", ""),
     )
     gbp = plan.get("gbp", {})
     gbp_image = build_platform_image(
-        gbp.get("image_title", ""), gbp.get("image_body", ""), 1200, 900, brand_name
+        gbp.get("image_title", ""), gbp.get("image_body", ""), 1200, 900, brand_name,
+        gbp.get("visual", ""),
     )
     reel = plan.get("reel", {})
+    reel_visual = (reel.get("scenes") or [{}])[0].get("visual", "")
     reel_cover = build_platform_image(
-        reel.get("cover_title", ""), reel.get("cover_body", ""), 1080, 1920, brand_name
+        reel.get("cover_title", ""), reel.get("cover_body", ""), 1080, 1920, brand_name,
+        reel_visual,
     )
     youtube = plan.get("youtube", {})
+    youtube_visual = (youtube.get("scenes") or [{}])[0].get("visual", "")
     youtube_thumbnail = build_platform_image(
         youtube.get("thumbnail_title", ""),
         youtube.get("thumbnail_body", ""),
         1280,
         720,
         brand_name,
+        youtube_visual,
     )
     tiktok = plan.get("tiktok", {})
+    tiktok_visual = (tiktok.get("scenes") or [{}])[0].get("visual", "")
     tiktok_cover = build_platform_image(
-        tiktok.get("cover_title", ""), tiktok.get("cover_body", ""), 1080, 1920, brand_name
+        tiktok.get("cover_title", ""), tiktok.get("cover_body", ""), 1080, 1920, brand_name,
+        tiktok_visual,
     )
     progress("Instagramリール動画のナレーションとMP4を作成しています…")
     reel_video = build_video(
