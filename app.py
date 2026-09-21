@@ -1,4 +1,5 @@
 import ipaddress
+import json
 import os
 import re
 import socket
@@ -12,6 +13,7 @@ import streamlit as st
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
+from social_tools import build_media_package, generate_social_plan, social_text
 
 
 st.set_page_config(page_title="SEO記事自動生成", page_icon="✍️", layout="centered")
@@ -754,8 +756,211 @@ def render_url_tab(current_api_key: Optional[str], model: str) -> None:
         )
 
 
+def render_social_tab(current_api_key: Optional[str], model: str) -> None:
+    st.subheader("完成記事からSNSへ一括展開")
+    st.caption(
+        "完成記事をもとに、X・Facebook・Threads・Instagram・YouTube・TikTok用の素材を作成します。"
+    )
+
+    sources = {}
+    if "seo_result" in st.session_state:
+        sources["キーワードSEO記事の完成本文"] = st.session_state["seo_result"]["article"]
+    if "url_result" in st.session_state:
+        sources["URL紹介記事の完成本文"] = st.session_state["url_result"]["article"]
+    sources["記事を直接貼り付ける"] = ""
+
+    source_label = st.selectbox("ネタ元の記事", list(sources.keys()), key="social_source")
+    article = st.text_area(
+        "SNSへ展開する完成記事",
+        value=sources[source_label],
+        height=280,
+        key=f"social_article_{source_label}",
+        help="必要に応じて内容を修正してから生成できます。",
+    )
+    col1, col2 = st.columns(2)
+    with col1:
+        brand_name = st.text_input(
+            "画像・動画に表示する名称",
+            value="PONTE",
+            key="social_brand_name",
+        )
+    with col2:
+        voice = st.selectbox(
+            "ナレーションの声",
+            ["Sulafat", "Achird", "Aoede", "Kore", "Puck"],
+            key="social_voice",
+            help="Sulafatは温かい印象、Achirdは親しみやすい印象です。",
+        )
+
+    if st.button(
+        "SNS投稿文と動画構成を生成する",
+        type="primary",
+        use_container_width=True,
+        key="generate_social_plan",
+    ):
+        if not article.strip():
+            st.warning("ネタ元となる完成記事を入力してください。")
+            st.stop()
+        if not current_api_key:
+            st.error("左側の「Gemini API設定」からAPIキーを入力してください。")
+            st.stop()
+        client = genai.Client(api_key=current_api_key)
+        progress = st.progress(20, text="記事を各SNS向けに再構成しています…")
+        try:
+            plan = generate_social_plan(client, model, article.strip(), call_llm)
+            st.session_state["social_plan"] = plan
+            st.session_state.pop("social_media", None)
+            progress.progress(100, text="SNS投稿文と動画構成が完成しました。")
+        except json.JSONDecodeError:
+            st.error("SNS構成を正しい形式で取得できませんでした。もう一度お試しください。")
+        except Exception as exc:
+            display_error(exc)
+        finally:
+            client.close()
+
+    plan = st.session_state.get("social_plan")
+    if not plan:
+        return
+
+    st.divider()
+    st.subheader("① X（旧Twitter）投稿文")
+    for index, post in enumerate(plan.get("x_posts", []), start=1):
+        with st.container(border=True):
+            st.markdown(f"**パターン{index}**")
+            st.write(post.get("text", ""))
+            st.write(" ".join(post.get("hashtags", [])))
+
+    facebook = plan.get("facebook", {})
+    st.subheader("② Facebook投稿文")
+    with st.container(border=True):
+        st.write(facebook.get("text", ""))
+        st.write(" ".join(facebook.get("hashtags", [])))
+        st.markdown(
+            f"**投稿画像案：{facebook.get('image_title', '')}**  \n"
+            f"{facebook.get('image_body', '')}"
+        )
+
+    threads = plan.get("threads", {})
+    st.subheader("③ Threads投稿文")
+    with st.container(border=True):
+        st.write(threads.get("text", ""))
+        st.write(" ".join(threads.get("hashtags", [])))
+
+    carousel = plan.get("carousel", {})
+    st.subheader("④ Instagramカルーセル9枚")
+    for index, slide in enumerate(carousel.get("slides", []), start=1):
+        st.markdown(
+            f"**{index}枚目｜{slide.get('title', '')}**  \n{slide.get('body', '')}"
+        )
+    st.caption(carousel.get("caption", ""))
+    st.write(" ".join(carousel.get("hashtags", [])))
+
+    for number, (key, label) in enumerate(
+        (("reel", "Instagramリール"), ("youtube", "YouTube"), ("tiktok", "TikTok")),
+        start=5,
+    ):
+        item = plan.get(key, {})
+        st.subheader(f"{number}．{label}動画構成")
+        if item.get("title"):
+            st.markdown(f"**{item['title']}**")
+        for index, scene in enumerate(item.get("scenes", []), start=1):
+            with st.expander(f"シーン{index}｜{scene.get('caption', '')}"):
+                st.write(scene.get("narration", ""))
+        st.caption(item.get("caption", item.get("description", "")))
+        st.write(" ".join(item.get("hashtags", [])))
+
+    st.download_button(
+        "SNS投稿文・構成をテキストでダウンロード",
+        data=social_text(plan).encode("utf-8-sig"),
+        file_name="social_posts.txt",
+        mime="text/plain",
+        use_container_width=True,
+        key="download_social_text",
+    )
+
+    st.info(
+        "次のボタンで、9枚の画像とナレーション・BGM付きの3種類のMP4を作成します。数分かかる場合があります。"
+    )
+    st.caption(
+        "ナレーションにはGemini TTSプレビューモデルを使用します。利用可否・料金・回数制限はGoogle AI Studioのアカウント設定により異なります。"
+    )
+    if st.button(
+        "画像と動画を一括作成する",
+        type="primary",
+        use_container_width=True,
+        key="build_social_media",
+    ):
+        if not current_api_key:
+            st.error("左側の「Gemini API設定」からAPIキーを入力してください。")
+            st.stop()
+        client = genai.Client(api_key=current_api_key)
+        with st.status("SNS画像・動画を作成しています…", expanded=True) as status:
+            try:
+                media = build_media_package(
+                    client,
+                    plan,
+                    brand_name.strip(),
+                    voice,
+                    lambda message: status.write(message),
+                )
+                st.session_state["social_media"] = media
+                status.update(label="すべての画像・動画が完成しました", state="complete")
+            except Exception as exc:
+                status.update(label="画像・動画の作成を完了できませんでした", state="error")
+                display_error(exc)
+            finally:
+                client.close()
+
+    media = st.session_state.get("social_media")
+    if not media:
+        return
+
+    st.success("投稿素材が完成しました。")
+    st.download_button(
+        "全SNS素材をまとめてZIPでダウンロード",
+        data=media["all_zip"],
+        file_name="social_media_package.zip",
+        mime="application/zip",
+        use_container_width=True,
+        key="download_all_social_media",
+    )
+    st.download_button(
+        "Instagramカルーセル9枚をダウンロード",
+        data=media["carousel_zip"],
+        file_name="instagram_carousel_9.zip",
+        mime="application/zip",
+        use_container_width=True,
+        key="download_carousel_media",
+    )
+    st.markdown("**Facebook投稿画像（1200×630px）**")
+    st.image(media["facebook_image"], use_container_width=True)
+    st.download_button(
+        "Facebook投稿画像をダウンロード",
+        data=media["facebook_image"],
+        file_name="facebook_post_1200x630.png",
+        mime="image/png",
+        use_container_width=True,
+        key="download_facebook_image",
+    )
+    for key, label, filename in (
+        ("reel_video", "Instagramリール動画", "instagram_reel.mp4"),
+        ("youtube_video", "YouTube動画", "youtube_video.mp4"),
+        ("tiktok_video", "TikTok動画", "tiktok_video.mp4"),
+    ):
+        st.markdown(f"**{label}**")
+        st.video(media[key])
+        st.download_button(
+            f"{label}をダウンロード",
+            data=media[key],
+            file_name=filename,
+            mime="video/mp4",
+            use_container_width=True,
+            key=f"download_{key}",
+        )
+
+
 st.title("SEO記事自動生成")
-st.caption("キーワードからの記事作成と、URLからの紹介記事作成をタブで切り替えられます。")
+st.caption("記事作成からSNS投稿・動画への展開まで、タブで切り替えられます。")
 
 with st.sidebar:
     st.header("Gemini API設定")
@@ -778,8 +983,8 @@ with st.sidebar:
 
 current_api_key = api_key_input.strip() or saved_key
 model = model.strip()
-keyword_tab, url_tab = st.tabs(
-    ["キーワードからSEO記事", "URLから紹介記事"]
+keyword_tab, url_tab, social_tab = st.tabs(
+    ["キーワードからSEO記事", "URLから紹介記事", "記事からSNS展開"]
 )
 
 with keyword_tab:
@@ -917,3 +1122,6 @@ with keyword_tab:
 
 with url_tab:
     render_url_tab(current_api_key, model)
+
+with social_tab:
+    render_social_tab(current_api_key, model)
