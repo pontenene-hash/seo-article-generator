@@ -12,11 +12,15 @@ from typing import Callable
 
 import imageio_ffmpeg
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+import requests
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 TTS_MODEL = "gemini-3.1-flash-tts-preview"
+AI_IMAGE_MODEL = "black-forest-labs/flux.1-schnell"
+AI_IMAGE_ENDPOINT = "https://gen.pollinations.ai/v1/images/generations"
 SAMPLE_RATE = 24_000
+MAX_AI_ILLUSTRATIONS = 8
 
 
 def _strip_code_fence(text: str) -> str:
@@ -234,6 +238,92 @@ def _infer_visual(text: str, hint: str = "") -> str:
     return "learning"
 
 
+def _illustration_sources(plan: dict) -> dict[str, str]:
+    """内容の近い場面を同じ絵として再利用し、無料クレジットを節約する。"""
+    sources: dict[str, str] = {}
+
+    def add(visual: str, text: str) -> None:
+        key = _infer_visual(text, visual)
+        cleaned = re.sub(r"\s+", " ", text).strip()[:420]
+        if cleaned and key not in sources and len(sources) < MAX_AI_ILLUSTRATIONS:
+            sources[key] = cleaned
+
+    for slide in plan.get("carousel", {}).get("slides", []):
+        add(slide.get("visual", ""), f"{slide.get('title', '')}。{slide.get('body', '')}")
+    for platform in ("reel", "youtube", "tiktok"):
+        for scene in plan.get(platform, {}).get("scenes", []):
+            add(
+                scene.get("visual", ""),
+                f"{scene.get('caption', '')}。{scene.get('narration', '')}",
+            )
+    for item, title_key, body_key in (
+        (plan.get("x_image", {}), "title", "body"),
+        (plan.get("threads", {}), "image_title", "image_body"),
+        (plan.get("facebook", {}), "image_title", "image_body"),
+        (plan.get("gbp", {}), "image_title", "image_body"),
+    ):
+        add(item.get("visual", ""), f"{item.get(title_key, '')}。{item.get(body_key, '')}")
+    return sources
+
+
+def _professional_prompt(scene_text: str) -> str:
+    return f"""Create a premium editorial illustration for a Japanese wellness and lifestyle social media post.
+Scene meaning: {scene_text}
+Art direction: highly polished professional digital illustration, warm human emotion, refined facial expressions and natural body language, carefully drawn hands, clothing, environment and small relevant objects, sophisticated soft color palette of teal, sage green, warm coral and cream, gentle natural light, subtle depth and texture, clean contemporary Japanese magazine aesthetic, trustworthy and welcoming, balanced composition with the main subject centered, suitable for an adult audience.
+Important: illustration only. No text, no letters, no captions, no logos, no watermark, no brand marks, no UI, no border. Avoid graphic medical imagery, distorted anatomy, extra fingers, duplicated people and clutter."""
+
+
+def _generate_ai_illustration(api_key: str, scene_text: str) -> Image.Image:
+    response = requests.post(
+        AI_IMAGE_ENDPOINT,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "prompt": _professional_prompt(scene_text),
+            "model": AI_IMAGE_MODEL,
+            "size": "1024x1024",
+            "quality": "medium",
+            "response_format": "b64_json",
+            "safe": "true",
+        },
+        timeout=180,
+    )
+    if response.status_code == 402:
+        raise RuntimeError("Pollinationsの無料クレジット残高が不足しています。")
+    if response.status_code == 401:
+        raise RuntimeError("Pollinations APIキーが正しくありません。")
+    response.raise_for_status()
+    payload = response.json()
+    data = (payload.get("data") or [{}])[0]
+    encoded = data.get("b64_json")
+    if not encoded:
+        raise RuntimeError("高品質イラストの画像データを取得できませんでした。")
+    image = Image.open(io.BytesIO(base64.b64decode(encoded)))
+    image.load()
+    return image.convert("RGB")
+
+
+def build_professional_illustrations(
+    plan: dict,
+    api_key: str,
+    progress: Callable[[str], None],
+) -> dict[str, Image.Image]:
+    sources = _illustration_sources(plan)
+    illustrations: dict[str, Image.Image] = {}
+    errors: list[str] = []
+    for index, (visual, scene_text) in enumerate(sources.items(), start=1):
+        progress(f"プロ品質のAIイラストを生成しています…（{index}/{len(sources)}）")
+        try:
+            illustrations[visual] = _generate_ai_illustration(api_key, scene_text)
+        except Exception as exc:
+            errors.append(str(exc))
+    if not illustrations:
+        detail = errors[0] if errors else "画像生成サービスから応答がありませんでした。"
+        raise RuntimeError(f"高品質AIイラストを生成できませんでした：{detail}")
+    if errors:
+        progress("一部の絵は取得できなかったため、内容別の標準イラストで補完します。")
+    return illustrations
+
+
 def _draw_person(draw: ImageDraw.ImageDraw, x: int, y: int, scale: float, pose: str = "stand") -> None:
     skin = (244, 190, 154, 255)
     hair = (65, 61, 58, 255)
@@ -402,6 +492,7 @@ def render_card(
     brand_name: str,
     illustration_hint: str = "",
     semantic_text: str = "",
+    professional_illustration: Image.Image | None = None,
 ) -> Image.Image:
     image = _gradient(width, height)
     draw = ImageDraw.Draw(image)
@@ -440,12 +531,40 @@ def render_card(
     illustration_height = int(height * (0.34 if body else 0.50))
     illustration_bottom_limit = footer_y - (int(height * 0.14) if body else int(height * 0.02))
     illustration_height = max(90, min(illustration_height, illustration_bottom_limit - illustration_top))
-    scene = _draw_scene(
-        _infer_visual(f"{title} {body} {semantic_text}", illustration_hint),
-        usable_width,
-        illustration_height,
-    )
-    image.paste(scene, (margin * 2, illustration_top), scene)
+    if professional_illustration is not None:
+        scene = ImageOps.fit(
+            professional_illustration.convert("RGB"),
+            (usable_width, illustration_height),
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.45),
+        )
+        corner_radius = max(18, width // 45)
+        mask = Image.new("L", scene.size, 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.rounded_rectangle(
+            (0, 0, scene.width - 1, scene.height - 1),
+            radius=corner_radius,
+            fill=255,
+        )
+        image.paste(scene, (margin * 2, illustration_top), mask)
+        draw.rounded_rectangle(
+            (
+                margin * 2,
+                illustration_top,
+                margin * 2 + usable_width,
+                illustration_top + illustration_height,
+            ),
+            radius=corner_radius,
+            outline=(184, 220, 211),
+            width=max(2, width // 360),
+        )
+    else:
+        scene = _draw_scene(
+            _infer_visual(f"{title} {body} {semantic_text}", illustration_hint),
+            usable_width,
+            illustration_height,
+        )
+        image.paste(scene, (margin * 2, illustration_top), scene)
 
     body_lines = _wrap(draw, body, body_font, usable_width)[:4]
     body_y = illustration_top + illustration_height + int(height * 0.015)
@@ -480,11 +599,19 @@ def _image_bytes(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
-def build_carousel(slides: list[dict], brand_name: str) -> tuple[list[bytes], bytes]:
+def build_carousel(
+    slides: list[dict],
+    brand_name: str,
+    illustrations: dict[str, Image.Image] | None = None,
+) -> tuple[list[bytes], bytes]:
     images = []
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as archive:
         for index, slide in enumerate(slides, start=1):
+            visual = _infer_visual(
+                f"{slide.get('title', '')} {slide.get('body', '')}",
+                slide.get("visual", ""),
+            )
             image = render_card(
                 slide.get("title", ""),
                 slide.get("body", ""),
@@ -493,7 +620,8 @@ def build_carousel(slides: list[dict], brand_name: str) -> tuple[list[bytes], by
                 index,
                 len(slides),
                 brand_name,
-                slide.get("visual", ""),
+                visual,
+                professional_illustration=(illustrations or {}).get(visual),
             )
             data = _image_bytes(image)
             images.append(data)
@@ -501,7 +629,15 @@ def build_carousel(slides: list[dict], brand_name: str) -> tuple[list[bytes], by
     return images, zip_buffer.getvalue()
 
 
-def build_facebook_image(facebook: dict, brand_name: str) -> bytes:
+def build_facebook_image(
+    facebook: dict,
+    brand_name: str,
+    illustrations: dict[str, Image.Image] | None = None,
+) -> bytes:
+    visual = _infer_visual(
+        f"{facebook.get('image_title', '')} {facebook.get('image_body', '')}",
+        facebook.get("visual", ""),
+    )
     image = render_card(
         facebook.get("image_title", ""),
         facebook.get("image_body", ""),
@@ -510,7 +646,8 @@ def build_facebook_image(facebook: dict, brand_name: str) -> bytes:
         1,
         1,
         brand_name,
-        facebook.get("visual", ""),
+        visual,
+        professional_illustration=(illustrations or {}).get(visual),
     )
     return _image_bytes(image)
 
@@ -522,9 +659,21 @@ def build_platform_image(
     height: int,
     brand_name: str,
     illustration_hint: str = "",
+    illustrations: dict[str, Image.Image] | None = None,
 ) -> bytes:
+    visual = _infer_visual(f"{title} {body}", illustration_hint)
     return _image_bytes(
-        render_card(title, body, width, height, 1, 1, brand_name, illustration_hint)
+        render_card(
+            title,
+            body,
+            width,
+            height,
+            1,
+            1,
+            brand_name,
+            visual,
+            professional_illustration=(illustrations or {}).get(visual),
+        )
     )
 
 
@@ -600,6 +749,7 @@ def build_video(
     brand_name: str,
     voice: str,
     output_name: str,
+    illustrations: dict[str, Image.Image] | None = None,
 ) -> bytes:
     narration_parts = [scene.get("narration", "").strip() for scene in scenes]
     narration = "\n".join(part for part in narration_parts if part)
@@ -624,6 +774,10 @@ def build_video(
         concat_lines = []
         for index, (scene, scene_duration) in enumerate(zip(scenes, durations), start=1):
             frame_path = tmp_dir / f"frame_{index:02d}.png"
+            visual = _infer_visual(
+                f"{scene.get('caption', '')} {scene.get('narration', '')}",
+                scene.get("visual", ""),
+            )
             image = render_card(
                 scene.get("caption", ""),
                 "",
@@ -632,8 +786,9 @@ def build_video(
                 index,
                 len(scenes),
                 brand_name,
-                scene.get("visual", ""),
+                visual,
                 scene.get("narration", ""),
+                (illustrations or {}).get(visual),
             )
             image.save(frame_path, "PNG")
             concat_lines.append(f"file '{_safe_concat_path(frame_path)}'")
@@ -720,32 +875,45 @@ def build_media_package(
     brand_name: str,
     voice: str,
     progress: Callable[[str], None],
+    pollinations_api_key: str = "",
+    use_professional_ai: bool = False,
 ) -> dict[str, bytes]:
+    illustrations: dict[str, Image.Image] = {}
+    if use_professional_ai:
+        if not pollinations_api_key:
+            raise ValueError("高品質AIイラスト用のPollinations APIキーを設定してください。")
+        illustrations = build_professional_illustrations(
+            plan,
+            pollinations_api_key,
+            progress,
+        )
     progress("9枚のカルーセル画像を作成しています…")
-    carousel_images, carousel_zip = build_carousel(plan["carousel"]["slides"], brand_name)
+    carousel_images, carousel_zip = build_carousel(
+        plan["carousel"]["slides"], brand_name, illustrations
+    )
     progress("Facebook投稿画像を作成しています…")
-    facebook_image = build_facebook_image(plan.get("facebook", {}), brand_name)
+    facebook_image = build_facebook_image(plan.get("facebook", {}), brand_name, illustrations)
     progress("各SNSの投稿画像・表紙・サムネイルを作成しています…")
     x_image_data = plan.get("x_image", {})
     x_image = build_platform_image(
         x_image_data.get("title", ""), x_image_data.get("body", ""), 1200, 675, brand_name,
-        x_image_data.get("visual", ""),
+        x_image_data.get("visual", ""), illustrations,
     )
     threads = plan.get("threads", {})
     threads_image = build_platform_image(
         threads.get("image_title", ""), threads.get("image_body", ""), 1080, 1080, brand_name,
-        threads.get("visual", ""),
+        threads.get("visual", ""), illustrations,
     )
     gbp = plan.get("gbp", {})
     gbp_image = build_platform_image(
         gbp.get("image_title", ""), gbp.get("image_body", ""), 1200, 900, brand_name,
-        gbp.get("visual", ""),
+        gbp.get("visual", ""), illustrations,
     )
     reel = plan.get("reel", {})
     reel_visual = (reel.get("scenes") or [{}])[0].get("visual", "")
     reel_cover = build_platform_image(
         reel.get("cover_title", ""), reel.get("cover_body", ""), 1080, 1920, brand_name,
-        reel_visual,
+        reel_visual, illustrations,
     )
     youtube = plan.get("youtube", {})
     youtube_visual = (youtube.get("scenes") or [{}])[0].get("visual", "")
@@ -756,24 +924,28 @@ def build_media_package(
         720,
         brand_name,
         youtube_visual,
+        illustrations,
     )
     tiktok = plan.get("tiktok", {})
     tiktok_visual = (tiktok.get("scenes") or [{}])[0].get("visual", "")
     tiktok_cover = build_platform_image(
         tiktok.get("cover_title", ""), tiktok.get("cover_body", ""), 1080, 1920, brand_name,
-        tiktok_visual,
+        tiktok_visual, illustrations,
     )
     progress("Instagramリール動画のナレーションとMP4を作成しています…")
     reel_video = build_video(
-        client, plan["reel"]["scenes"], 1080, 1920, brand_name, voice, "instagram_reel.mp4"
+        client, plan["reel"]["scenes"], 1080, 1920, brand_name, voice, "instagram_reel.mp4",
+        illustrations,
     )
     progress("YouTube動画のナレーションとMP4を作成しています…")
     youtube_video = build_video(
-        client, plan["youtube"]["scenes"], 1920, 1080, brand_name, voice, "youtube_video.mp4"
+        client, plan["youtube"]["scenes"], 1920, 1080, brand_name, voice, "youtube_video.mp4",
+        illustrations,
     )
     progress("TikTok動画のナレーションとMP4を作成しています…")
     tiktok_video = build_video(
-        client, plan["tiktok"]["scenes"], 1080, 1920, brand_name, voice, "tiktok_video.mp4"
+        client, plan["tiktok"]["scenes"], 1080, 1920, brand_name, voice, "tiktok_video.mp4",
+        illustrations,
     )
 
     text_data = _social_text(plan).encode("utf-8-sig")

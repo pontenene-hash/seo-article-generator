@@ -80,6 +80,15 @@ streamlit run app.py
 
 入力値はアプリのファイルには保存されません。無料で使う場合は、Google AI Studioで有料請求を設定する必要はありません。
 
+### プロ品質AIイラストを使う方法
+
+1. [Pollinations](https://enter.pollinations.ai/)へアクセスし、無料登録します。
+2. バックエンド用のSecret Key（`sk_`から始まるキー）を作成します。
+3. アプリ左側の「高品質イラスト設定」に貼り付けます。
+4. SNS展開画面で「プロ品質AIイラスト」を選びます。
+
+無料クレジットには上限があります。アプリは1回の一括生成につき最大8種類まで画像を生成し、内容が近い場面では同じ絵を再利用します。有料クレジットを購入していない場合、無料残高がなくなると生成は停止し、標準イラストへ切り替えられます。
+
 ### 毎回の入力を省く方法
 
 `.streamlit/secrets.toml.example` を `.streamlit/secrets.toml` という名前でコピーし、APIキーを書き換えます。
@@ -87,6 +96,7 @@ streamlit run app.py
 ```toml
 GEMINI_API_KEY = "実際のGemini APIキー"
 GEMINI_MODEL = "gemini-3.5-flash-lite"
+POLLINATIONS_API_KEY = "実際のPollinations APIキー"
 ```
 
 `secrets.toml` はGitHubへアップロードしないでください。このプロジェクトの `.gitignore` では除外設定済みです。
@@ -100,6 +110,7 @@ GEMINI_MODEL = "gemini-3.5-flash-lite"
 ```toml
 GEMINI_API_KEY = "実際のGemini APIキー"
 GEMINI_MODEL = "gemini-3.5-flash-lite"
+POLLINATIONS_API_KEY = "実際のPollinations APIキー"
 ```
 
 4. 保存後にアプリを再起動します。

@@ -764,7 +764,11 @@ def render_url_tab(current_api_key: Optional[str], model: str) -> None:
         )
 
 
-def render_social_tab(current_api_key: Optional[str], model: str) -> None:
+def render_social_tab(
+    current_api_key: Optional[str],
+    model: str,
+    pollinations_api_key: Optional[str],
+) -> None:
     st.subheader("完成記事からSNSへ一括展開")
     st.caption(
         "完成記事をもとに、X・Facebook・Threads・Instagram・YouTube・TikTok用の素材を作成します。"
@@ -834,6 +838,28 @@ def render_social_tab(current_api_key: Optional[str], model: str) -> None:
     demo_audio = st.session_state.get("voice_demos", {}).get(voice)
     if demo_audio:
         st.audio(demo_audio, format="audio/wav")
+
+    st.markdown("**画像・動画のイラスト品質**")
+    image_mode = st.radio(
+        "イラスト生成方法",
+        (
+            "プロ品質AIイラスト（Pollinations無料クレジット対応）",
+            "標準イラスト（API不要・完全無料）",
+        ),
+        key="social_image_mode",
+        label_visibility="collapsed",
+    )
+    use_professional_ai = image_mode.startswith("プロ品質")
+    if use_professional_ai:
+        if pollinations_api_key:
+            st.success("高品質AIイラストを最大8種類生成し、似た場面で再利用します。")
+        else:
+            st.warning(
+                "左側の「高品質イラスト設定」にPollinations APIキーを入力してください。"
+            )
+        st.caption(
+            "記事全文ではなく、各場面の短い見出し・説明だけを画像生成サービスへ送信します。"
+        )
 
     if st.button(
         "SNS投稿文と動画構成を生成する",
@@ -950,6 +976,9 @@ def render_social_tab(current_api_key: Optional[str], model: str) -> None:
         if not current_api_key:
             st.error("左側の「Gemini API設定」からAPIキーを入力してください。")
             st.stop()
+        if use_professional_ai and not pollinations_api_key:
+            st.error("左側の「高品質イラスト設定」からPollinations APIキーを入力してください。")
+            st.stop()
         client = genai.Client(api_key=current_api_key)
         with st.status("SNS画像・動画を作成しています…", expanded=True) as status:
             try:
@@ -959,6 +988,8 @@ def render_social_tab(current_api_key: Optional[str], model: str) -> None:
                     brand_name.strip(),
                     voice,
                     lambda message: status.write(message),
+                    pollinations_api_key or "",
+                    use_professional_ai,
                 )
                 st.session_state["social_media"] = media
                 status.update(label="すべての画像・動画が完成しました", state="complete")
@@ -1048,7 +1079,21 @@ with st.sidebar:
     st.success("無料枠の対象モデルを初期設定しています。")
     st.warning("無料枠では、入力内容がGoogle製品の改善に利用される場合があります。氏名・住所・症例などの個人情報は入力しないでください。")
 
+    st.divider()
+    st.header("高品質イラスト設定")
+    saved_pollinations_key = secret_value("POLLINATIONS_API_KEY")
+    pollinations_key_input = st.text_input(
+        "Pollinations APIキー",
+        type="password",
+        placeholder="sk_ から始まるキー",
+        help="無料クレジット対応。Secretsに保存済みの場合は入力不要です。",
+    )
+    if saved_pollinations_key:
+        st.success("保存済みの画像生成APIキーを使用できます。")
+    st.caption("有料クレジットを購入しなければ、無料残高終了後は画像生成が停止します。")
+
 current_api_key = api_key_input.strip() or saved_key
+current_pollinations_key = pollinations_key_input.strip() or saved_pollinations_key
 model = model.strip()
 keyword_tab, url_tab, social_tab = st.tabs(
     ["キーワードからSEO記事", "URLから紹介記事", "記事からSNS展開"]
@@ -1191,4 +1236,4 @@ with url_tab:
     render_url_tab(current_api_key, model)
 
 with social_tab:
-    render_social_tab(current_api_key, model)
+    render_social_tab(current_api_key, model, current_pollinations_key)
