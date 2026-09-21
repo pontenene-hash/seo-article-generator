@@ -829,6 +829,8 @@ def render_social_tab(current_api_key: Optional[str], model: str) -> None:
             st.markdown(f"**パターン{index}**")
             st.write(post.get("text", ""))
             st.write(" ".join(post.get("hashtags", [])))
+    x_image = plan.get("x_image", {})
+    st.caption(f"投稿画像案：{x_image.get('title', '')}｜{x_image.get('body', '')}")
 
     facebook = plan.get("facebook", {})
     st.subheader("② Facebook投稿文")
@@ -836,18 +838,30 @@ def render_social_tab(current_api_key: Optional[str], model: str) -> None:
         st.write(facebook.get("text", ""))
         st.write(" ".join(facebook.get("hashtags", [])))
         st.markdown(
-            f"**投稿画像案：{facebook.get('image_title', '')}**  \n"
+            f"**アイキャッチ画像案：{facebook.get('image_title', '')}**  \n"
             f"{facebook.get('image_body', '')}"
         )
 
+    gbp = plan.get("gbp", {})
+    st.subheader("③ Googleビジネスプロフィール投稿")
+    with st.container(border=True):
+        st.write(gbp.get("text", ""))
+        st.markdown(
+            f"**GBP投稿画像案：{gbp.get('image_title', '')}**  \n"
+            f"{gbp.get('image_body', '')}"
+        )
+
     threads = plan.get("threads", {})
-    st.subheader("③ Threads投稿文")
+    st.subheader("④ Threads投稿文")
     with st.container(border=True):
         st.write(threads.get("text", ""))
         st.write(" ".join(threads.get("hashtags", [])))
+        st.caption(
+            f"投稿画像案：{threads.get('image_title', '')}｜{threads.get('image_body', '')}"
+        )
 
     carousel = plan.get("carousel", {})
-    st.subheader("④ Instagramカルーセル9枚")
+    st.subheader("⑤ Instagramカルーセル9枚")
     for index, slide in enumerate(carousel.get("slides", []), start=1):
         st.markdown(
             f"**{index}枚目｜{slide.get('title', '')}**  \n{slide.get('body', '')}"
@@ -857,7 +871,7 @@ def render_social_tab(current_api_key: Optional[str], model: str) -> None:
 
     for number, (key, label) in enumerate(
         (("reel", "Instagramリール"), ("youtube", "YouTube"), ("tiktok", "TikTok")),
-        start=5,
+        start=6,
     ):
         item = plan.get(key, {})
         st.subheader(f"{number}．{label}動画構成")
@@ -879,7 +893,7 @@ def render_social_tab(current_api_key: Optional[str], model: str) -> None:
     )
 
     st.info(
-        "次のボタンで、9枚の画像とナレーション・BGM付きの3種類のMP4を作成します。数分かかる場合があります。"
+        "次のボタンで、カルーセル9枚、各SNSの投稿画像・表紙・サムネイル、ナレーション・BGM付きMP4を一括作成します。数分かかる場合があります。"
     )
     st.caption(
         "ナレーションにはGemini TTSプレビューモデルを使用します。利用可否・料金・回数制限はGoogle AI Studioのアカウント設定により異なります。"
@@ -932,16 +946,26 @@ def render_social_tab(current_api_key: Optional[str], model: str) -> None:
         use_container_width=True,
         key="download_carousel_media",
     )
-    st.markdown("**Facebook投稿画像（1200×630px）**")
-    st.image(media["facebook_image"], use_container_width=True)
-    st.download_button(
-        "Facebook投稿画像をダウンロード",
-        data=media["facebook_image"],
-        file_name="facebook_post_1200x630.png",
-        mime="image/png",
-        use_container_width=True,
-        key="download_facebook_image",
+    image_assets = (
+        ("x_image", "X投稿画像（1200×675px）", "x_post_1200x675.png"),
+        ("facebook_image", "Facebookアイキャッチ画像（1200×630px）", "facebook_eyecatch_1200x630.png"),
+        ("gbp_image", "GBP投稿画像（1200×900px）", "gbp_post_1200x900.png"),
+        ("threads_image", "Threads投稿画像（1080×1080px）", "threads_post_1080x1080.png"),
+        ("reel_cover", "Instagramリール表紙（1080×1920px）", "instagram_reel_cover_1080x1920.png"),
+        ("youtube_thumbnail", "YouTubeサムネイル（1280×720px）", "youtube_thumbnail_1280x720.png"),
+        ("tiktok_cover", "TikTok表紙（1080×1920px）", "tiktok_cover_1080x1920.png"),
     )
+    for key, label, filename in image_assets:
+        with st.expander(label):
+            st.image(media[key], use_container_width=True)
+            st.download_button(
+                f"{label}をダウンロード",
+                data=media[key],
+                file_name=filename,
+                mime="image/png",
+                use_container_width=True,
+                key=f"download_{key}",
+            )
     for key, label, filename in (
         ("reel_video", "Instagramリール動画", "instagram_reel.mp4"),
         ("youtube_video", "YouTube動画", "youtube_video.mp4"),

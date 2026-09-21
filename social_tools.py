@@ -53,12 +53,23 @@ JSON形式：
     {{"text": "別角度の投稿文", "hashtags": ["#タグ"]}},
     {{"text": "別角度の投稿文", "hashtags": ["#タグ"]}}
   ],
-  "threads": {{"text": "少し長めの投稿文", "hashtags": ["#タグ"]}},
+  "x_image": {{"title": "X投稿画像の見出し", "body": "60文字以内の説明"}},
+  "threads": {{
+    "text": "少し長めの投稿文",
+    "hashtags": ["#タグ"],
+    "image_title": "Threads画像の見出し",
+    "image_body": "60文字以内の説明"
+  }},
   "facebook": {{
     "text": "信頼感のある詳しい投稿文",
     "hashtags": ["#タグ"],
     "image_title": "画像に表示する短い見出し",
     "image_body": "画像に表示する60文字以内の説明"
+  }},
+  "gbp": {{
+    "text": "Googleビジネスプロフィール最新情報の投稿文",
+    "image_title": "GBP画像の短い見出し",
+    "image_body": "80文字以内の説明"
   }},
   "carousel": {{
     "caption": "Instagramキャプション",
@@ -68,17 +79,23 @@ JSON形式：
   "reel": {{
     "caption": "Instagramリールキャプション",
     "hashtags": ["#タグ"],
+    "cover_title": "リール表紙の短い見出し",
+    "cover_body": "短い補足",
     "scenes": [{{"caption": "画面表示20文字以内", "narration": "読み上げ文"}}]
   }},
   "youtube": {{
     "title": "YouTubeタイトル",
     "description": "概要欄",
     "hashtags": ["#タグ"],
+    "thumbnail_title": "サムネイルの短い見出し",
+    "thumbnail_body": "短い補足",
     "scenes": [{{"caption": "画面見出し", "narration": "読み上げ文"}}]
   }},
   "tiktok": {{
     "caption": "TikTokキャプション",
     "hashtags": ["#タグ"],
+    "cover_title": "TikTok表紙の短い見出し",
+    "cover_body": "短い補足",
     "scenes": [{{"caption": "画面表示20文字以内", "narration": "読み上げ文"}}]
   }}
 }}"""
@@ -242,6 +259,16 @@ def build_facebook_image(facebook: dict, brand_name: str) -> bytes:
     return _image_bytes(image)
 
 
+def build_platform_image(
+    title: str,
+    body: str,
+    width: int,
+    height: int,
+    brand_name: str,
+) -> bytes:
+    return _image_bytes(render_card(title, body, width, height, 1, 1, brand_name))
+
+
 def _tts_pcm(client, narration: str, voice: str) -> bytes:
     prompt = (
         "次の日本語原稿を、聞き取りやすく、やさしく信頼感のある自然な速度で、"
@@ -392,6 +419,8 @@ def _social_text(plan: dict) -> str:
     parts.append(
         f"\n\nFacebook投稿\n{facebook.get('text', '')}\n{' '.join(facebook.get('hashtags', []))}"
     )
+    gbp = plan.get("gbp", {})
+    parts.append(f"\n\nGoogleビジネスプロフィール投稿\n{gbp.get('text', '')}")
     carousel = plan.get("carousel", {})
     parts.append(
         f"\n\nInstagramカルーセル キャプション\n{carousel.get('caption', '')}\n{' '.join(carousel.get('hashtags', []))}"
@@ -419,6 +448,35 @@ def build_media_package(
     carousel_images, carousel_zip = build_carousel(plan["carousel"]["slides"], brand_name)
     progress("Facebook投稿画像を作成しています…")
     facebook_image = build_facebook_image(plan.get("facebook", {}), brand_name)
+    progress("各SNSの投稿画像・表紙・サムネイルを作成しています…")
+    x_image_data = plan.get("x_image", {})
+    x_image = build_platform_image(
+        x_image_data.get("title", ""), x_image_data.get("body", ""), 1200, 675, brand_name
+    )
+    threads = plan.get("threads", {})
+    threads_image = build_platform_image(
+        threads.get("image_title", ""), threads.get("image_body", ""), 1080, 1080, brand_name
+    )
+    gbp = plan.get("gbp", {})
+    gbp_image = build_platform_image(
+        gbp.get("image_title", ""), gbp.get("image_body", ""), 1200, 900, brand_name
+    )
+    reel = plan.get("reel", {})
+    reel_cover = build_platform_image(
+        reel.get("cover_title", ""), reel.get("cover_body", ""), 1080, 1920, brand_name
+    )
+    youtube = plan.get("youtube", {})
+    youtube_thumbnail = build_platform_image(
+        youtube.get("thumbnail_title", ""),
+        youtube.get("thumbnail_body", ""),
+        1280,
+        720,
+        brand_name,
+    )
+    tiktok = plan.get("tiktok", {})
+    tiktok_cover = build_platform_image(
+        tiktok.get("cover_title", ""), tiktok.get("cover_body", ""), 1080, 1920, brand_name
+    )
     progress("Instagramリール動画のナレーションとMP4を作成しています…")
     reel_video = build_video(
         client, plan["reel"]["scenes"], 1080, 1920, brand_name, voice, "instagram_reel.mp4"
@@ -441,6 +499,12 @@ def build_media_package(
         for index, image_data in enumerate(carousel_images, start=1):
             archive.writestr(f"carousel/carousel_{index:02d}.png", image_data)
         archive.writestr("images/facebook_post_1200x630.png", facebook_image)
+        archive.writestr("images/x_post_1200x675.png", x_image)
+        archive.writestr("images/threads_post_1080x1080.png", threads_image)
+        archive.writestr("images/gbp_post_1200x900.png", gbp_image)
+        archive.writestr("images/instagram_reel_cover_1080x1920.png", reel_cover)
+        archive.writestr("images/youtube_thumbnail_1280x720.png", youtube_thumbnail)
+        archive.writestr("images/tiktok_cover_1080x1920.png", tiktok_cover)
         archive.writestr("videos/instagram_reel.mp4", reel_video)
         archive.writestr("videos/youtube_video.mp4", youtube_video)
         archive.writestr("videos/tiktok_video.mp4", tiktok_video)
@@ -448,6 +512,12 @@ def build_media_package(
         "all_zip": all_buffer.getvalue(),
         "carousel_zip": carousel_zip,
         "facebook_image": facebook_image,
+        "x_image": x_image,
+        "threads_image": threads_image,
+        "gbp_image": gbp_image,
+        "reel_cover": reel_cover,
+        "youtube_thumbnail": youtube_thumbnail,
+        "tiktok_cover": tiktok_cover,
         "reel_video": reel_video,
         "youtube_video": youtube_video,
         "tiktok_video": tiktok_video,
