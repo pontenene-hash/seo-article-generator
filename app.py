@@ -13,14 +13,7 @@ import streamlit as st
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
-from social_tools import (
-    build_image_package,
-    build_single_video,
-    build_voice_demo,
-    generate_social_plan,
-    package_available_media,
-    social_text,
-)
+from social_tools import creative_prompt_text, generate_social_plan, social_text
 
 
 st.set_page_config(page_title="SEO記事自動生成", page_icon="✍️", layout="centered")
@@ -774,11 +767,10 @@ def render_url_tab(current_api_key: Optional[str], model: str) -> None:
 def render_social_tab(
     current_api_key: Optional[str],
     model: str,
-    pollinations_api_key: Optional[str],
 ) -> None:
     st.subheader("完成記事からSNSへ一括展開")
     st.caption(
-        "完成記事をもとに、X・Facebook・Threads・Instagram・YouTube・TikTok用の素材を作成します。"
+        "完成記事をもとに、SNS投稿文と、プロ品質の画像・動画を作るための制作プロンプトを作成します。"
     )
 
     sources = {}
@@ -796,80 +788,19 @@ def render_social_tab(
         key=f"social_article_{source_label}",
         help="必要に応じて内容を修正してから生成できます。",
     )
-    col1, col2 = st.columns(2)
-    with col1:
-        brand_name = st.text_input(
-            "画像・動画に表示する名称",
-            value="PONTE",
-            key="social_brand_name",
-        )
-    with col2:
-        voice_descriptions = {
-            "Sulafat": "温かく落ち着いた声",
-            "Achird": "親しみやすく自然な声",
-            "Aoede": "明るくやわらかな声",
-            "Kore": "はっきりした信頼感のある声",
-            "Puck": "軽快で元気な声",
-        }
-        voice = st.selectbox(
-            "ナレーションの声",
-            list(voice_descriptions),
-            format_func=lambda name: f"{name}｜{voice_descriptions[name]}",
-            key="social_voice",
-            help="声を選んだあと、下のボタンで短いデモ音声を試聴できます。",
-        )
-
-    demo_col, note_col = st.columns([1, 2])
-    with demo_col:
-        if st.button(
-            "▶ 選んだ声を試聴する",
-            use_container_width=True,
-            key="preview_social_voice",
-        ):
-            if not current_api_key:
-                st.error("左側の「Gemini API設定」からAPIキーを入力してください。")
-            else:
-                client = genai.Client(api_key=current_api_key)
-                try:
-                    with st.spinner(f"{voice}のデモ音声を準備しています…"):
-                        demos = st.session_state.setdefault("voice_demos", {})
-                        if voice not in demos:
-                            demos[voice] = build_voice_demo(client, voice)
-                except Exception as exc:
-                    display_error(exc)
-                finally:
-                    client.close()
-    with note_col:
-        st.caption("同じ声のデモは、この画面を開いている間は再生成せず再利用します。")
-
-    demo_audio = st.session_state.get("voice_demos", {}).get(voice)
-    if demo_audio:
-        st.audio(demo_audio, format="audio/wav")
-
-    st.markdown("**画像・動画のイラスト品質**")
-    image_mode = st.radio(
-        "イラスト生成方法",
-        (
-            "プロ品質AIイラスト（Pollinations無料クレジット対応）",
-            "標準イラスト（API不要・完全無料）",
-        ),
-        key="social_image_mode",
-        label_visibility="collapsed",
+    brand_name = st.text_input(
+        "画像・動画に表示する名称（任意）",
+        value="PONTE",
+        key="social_brand_name",
+        help="プロンプト内で、必要な場合だけ控えめに表示する名称として使用します。",
     )
-    use_professional_ai = image_mode.startswith("プロ品質")
-    if use_professional_ai:
-        if pollinations_api_key:
-            st.success("高品質AIイラストを最大8種類生成し、似た場面で再利用します。")
-        else:
-            st.warning(
-                "左側の「高品質イラスト設定」にPollinations APIキーを入力してください。"
-            )
-        st.caption(
-            "記事全文ではなく、各場面の短い見出し・説明だけを画像生成サービスへ送信します。"
-        )
+    st.info(
+        "このアプリ内では画像・動画そのものを生成しません。完成したプロンプトを、"
+        "お使いの画像生成AI・動画生成AIへコピーして使用します。"
+    )
 
     if st.button(
-        "SNS投稿文と動画構成を生成する",
+        "SNS投稿文と制作プロンプトを生成する",
         type="primary",
         use_container_width=True,
         key="generate_social_plan",
@@ -883,10 +814,11 @@ def render_social_tab(
         client = genai.Client(api_key=current_api_key)
         progress = st.progress(20, text="記事を各SNS向けに再構成しています…")
         try:
-            plan = generate_social_plan(client, model, article.strip(), call_llm)
+            plan = generate_social_plan(
+                client, model, article.strip(), call_llm, brand_name.strip()
+            )
             st.session_state["social_plan"] = plan
-            st.session_state.pop("social_media", None)
-            progress.progress(100, text="SNS投稿文と動画構成が完成しました。")
+            progress.progress(100, text="SNS投稿文と画像・動画制作用プロンプトが完成しました。")
         except json.JSONDecodeError:
             st.error("SNS構成を正しい形式で取得できませんでした。もう一度お試しください。")
         except Exception as exc:
@@ -969,161 +901,64 @@ def render_social_tab(
     )
 
     st.divider()
-    st.subheader("画像・動画の作成")
+    st.subheader("画像・動画制作用プロンプト")
     st.info(
-        "無料枠を無駄にしないよう、画像と3種類の動画を別々に作成します。"
-        "完成した素材はその都度保持されるため、エラー後は未完成のボタンだけ押してください。"
+        "各プロンプトは、1件だけコピーして画像生成AI・動画生成AIへ貼り付けても成立します。"
+        "記事内画像のプロンプトは、完成記事のH2・H3ごとに自動作成しています。"
     )
-
-    media = st.session_state.setdefault("social_media", {})
-    image_keys = {
-        "carousel_zip", "facebook_image", "x_image", "threads_image", "gbp_image",
-        "reel_cover", "youtube_thumbnail", "tiktok_cover",
-    }
-    images_complete = image_keys.issubset(media)
-    if images_complete:
-        st.success("① 投稿画像は完成済みです。再生成する必要はありません。")
-    else:
-        if st.button(
-            "① 投稿画像を作成する",
-            type="primary",
-            use_container_width=True,
-            key="build_social_images",
+    prompt_tabs = st.tabs(["SNS画像", "カルーセル9枚", "動画", "記事内画像"])
+    prompts = plan.get("creative_prompts", {})
+    with prompt_tabs[0]:
+        for key, label in (
+            ("x_image", "X投稿画像"),
+            ("facebook_eyecatch", "Facebookアイキャッチ"),
+            ("gbp_image", "GBP投稿画像"),
+            ("threads_image", "Threads投稿画像"),
+            ("reel_cover", "Instagramリール表紙"),
+            ("youtube_thumbnail", "YouTubeサムネイル"),
+            ("tiktok_cover", "TikTok表紙"),
         ):
-            if use_professional_ai and not pollinations_api_key:
-                st.error("左側の「高品質イラスト設定」からPollinations APIキーを入力してください。")
-                st.stop()
-
-            def save_image_asset(key: str, value: object) -> None:
-                current_media = st.session_state.setdefault("social_media", {})
-                current_media[key] = value
-
-            with st.status("SNS投稿画像を作成しています…", expanded=True) as status:
-                try:
-                    build_image_package(
-                        plan,
-                        brand_name.strip(),
-                        lambda message: status.write(message),
-                        pollinations_api_key or "",
-                        use_professional_ai,
-                        save_image_asset,
-                    )
-                    status.update(label="すべての投稿画像が完成しました", state="complete")
-                    st.rerun()
-                except Exception as exc:
-                    status.update(label="画像作成を途中で停止しました", state="error")
-                    display_error(exc)
-
-    st.caption(
-        "動画ナレーションにはGemini TTSプレビューモデルを使用します。"
-        "無料枠では、3本を同じ日に作れない場合があります。1本ずつ作成してください。"
-    )
-    video_options = (
-        ("reel", "reel_video", "② Instagramリール動画"),
-        ("youtube", "youtube_video", "③ YouTube動画"),
-        ("tiktok", "tiktok_video", "④ TikTok動画"),
-    )
-    for platform, asset_key, label in video_options:
-        if asset_key in media:
-            st.success(f"{label}は完成済みです。")
-            continue
-        if st.button(
-            f"{label}を作成する",
-            use_container_width=True,
-            key=f"build_{platform}_video",
+            item = prompts.get(key, {})
+            with st.expander(label, expanded=(key == "x_image")):
+                st.caption(f"サイズ：{item.get('size', '')}｜推奨保存名：{item.get('output_filename', '')}")
+                st.code(item.get("prompt", ""), language=None, wrap_lines=True)
+    with prompt_tabs[1]:
+        for item in prompts.get("instagram_carousel", []):
+            with st.expander(f"{item.get('slide', '')}枚目｜{item.get('catch_copy', '')}"):
+                st.caption(f"推奨保存名：{item.get('output_filename', '')}")
+                st.code(item.get("prompt", ""), language=None, wrap_lines=True)
+    with prompt_tabs[2]:
+        for key, label in (
+            ("reel_video", "Instagramリール動画"),
+            ("youtube_video", "YouTube動画"),
+            ("tiktok_video", "TikTok動画"),
         ):
-            if not current_api_key:
-                st.error("左側の「Gemini API設定」からAPIキーを入力してください。")
-                st.stop()
-            client = genai.Client(api_key=current_api_key)
-            with st.status(f"{label}を作成しています…", expanded=True) as status:
-                try:
-                    saved_key, video_data = build_single_video(
-                        client,
-                        plan,
-                        platform,
-                        brand_name.strip(),
-                        voice,
-                        lambda message: status.write(message),
-                        media.get("_illustration_pngs"),
-                    )
-                    st.session_state.setdefault("social_media", {})[saved_key] = video_data
-                    status.update(label=f"{label}が完成しました", state="complete")
-                    st.rerun()
-                except Exception as exc:
-                    status.update(label=f"{label}を完成できませんでした", state="error")
-                    display_error(exc)
-                finally:
-                    client.close()
+            item = prompts.get(key, {})
+            with st.expander(label, expanded=(key == "reel_video")):
+                st.caption(
+                    f"サイズ：{item.get('size', '')}｜長さ：{item.get('duration', '')}｜"
+                    f"推奨保存名：{item.get('output_filename', '')}"
+                )
+                st.code(item.get("prompt", ""), language=None, wrap_lines=True)
+    with prompt_tabs[3]:
+        for item in prompts.get("article_section_images", []):
+            label = f"{item.get('heading_level', '')}｜{item.get('heading', '')}"
+            with st.expander(label):
+                st.caption(f"推奨保存名：{item.get('output_filename', '')}")
+                st.code(item.get("prompt", ""), language=None, wrap_lines=True)
 
-    media = st.session_state.get("social_media", {})
-    downloadable_keys = image_keys | {"reel_video", "youtube_video", "tiktok_video"}
-    completed_count = sum(key in media for key in downloadable_keys)
-    if not completed_count:
-        return
-
-    st.subheader("完成済み素材のダウンロード")
-    st.caption(f"現在 {completed_count}/{len(downloadable_keys)} 種類が完成しています。未完成でもZIPで保存できます。")
     st.download_button(
-        "現在完成している素材をZIPでダウンロード",
-        data=package_available_media(plan, media),
-        file_name="social_media_package_partial.zip",
-        mime="application/zip",
+        "画像・動画制作用プロンプトをまとめてダウンロード",
+        data=creative_prompt_text(plan).encode("utf-8-sig"),
+        file_name="seo_article_creative_prompts.md",
+        mime="text/markdown",
         use_container_width=True,
-        key="download_available_social_media",
+        key="download_creative_prompts",
     )
-    if media.get("carousel_zip"):
-        st.download_button(
-            "Instagramカルーセル9枚をダウンロード",
-            data=media["carousel_zip"],
-            file_name="instagram_carousel_9.zip",
-            mime="application/zip",
-            use_container_width=True,
-            key="download_carousel_media",
-        )
-    image_assets = (
-        ("x_image", "X投稿画像（1200×675px）", "x_post_1200x675.png"),
-        ("facebook_image", "Facebookアイキャッチ画像（1200×630px）", "facebook_eyecatch_1200x630.png"),
-        ("gbp_image", "GBP投稿画像（1200×900px）", "gbp_post_1200x900.png"),
-        ("threads_image", "Threads投稿画像（1080×1080px）", "threads_post_1080x1080.png"),
-        ("reel_cover", "Instagramリール表紙（1080×1920px）", "instagram_reel_cover_1080x1920.png"),
-        ("youtube_thumbnail", "YouTubeサムネイル（1280×720px）", "youtube_thumbnail_1280x720.png"),
-        ("tiktok_cover", "TikTok表紙（1080×1920px）", "tiktok_cover_1080x1920.png"),
-    )
-    for key, label, filename in image_assets:
-        if key not in media:
-            continue
-        with st.expander(label):
-            st.image(media[key], use_container_width=True)
-            st.download_button(
-                f"{label}をダウンロード",
-                data=media[key],
-                file_name=filename,
-                mime="image/png",
-                use_container_width=True,
-                key=f"download_{key}",
-            )
-    for key, label, filename in (
-        ("reel_video", "Instagramリール動画", "instagram_reel.mp4"),
-        ("youtube_video", "YouTube動画", "youtube_video.mp4"),
-        ("tiktok_video", "TikTok動画", "tiktok_video.mp4"),
-    ):
-        if key not in media:
-            continue
-        st.markdown(f"**{label}**")
-        st.video(media[key])
-        st.download_button(
-            f"{label}をダウンロード",
-            data=media[key],
-            file_name=filename,
-            mime="video/mp4",
-            use_container_width=True,
-            key=f"download_{key}",
-        )
 
 
 st.title("SEO記事自動生成")
-st.caption("記事作成からSNS投稿・動画への展開まで、タブで切り替えられます。")
+st.caption("記事作成からSNS投稿文、画像・動画制作用プロンプトまで、タブで切り替えられます。")
 
 with st.sidebar:
     st.header("Gemini API設定")
@@ -1144,21 +979,7 @@ with st.sidebar:
     st.success("無料枠の対象モデルを初期設定しています。")
     st.warning("無料枠では、入力内容がGoogle製品の改善に利用される場合があります。氏名・住所・症例などの個人情報は入力しないでください。")
 
-    st.divider()
-    st.header("高品質イラスト設定")
-    saved_pollinations_key = secret_value("POLLINATIONS_API_KEY")
-    pollinations_key_input = st.text_input(
-        "Pollinations APIキー",
-        type="password",
-        placeholder="sk_ から始まるキー",
-        help="無料クレジット対応。Secretsに保存済みの場合は入力不要です。",
-    )
-    if saved_pollinations_key:
-        st.success("保存済みの画像生成APIキーを使用できます。")
-    st.caption("有料クレジットを購入しなければ、無料残高終了後は画像生成が停止します。")
-
 current_api_key = api_key_input.strip() or saved_key
-current_pollinations_key = pollinations_key_input.strip() or saved_pollinations_key
 model = model.strip()
 keyword_tab, url_tab, social_tab = st.tabs(
     ["キーワードからSEO記事", "URLから紹介記事", "記事からSNS展開"]
@@ -1301,4 +1122,4 @@ with url_tab:
     render_url_tab(current_api_key, model)
 
 with social_tab:
-    render_social_tab(current_api_key, model, current_pollinations_key)
+    render_social_tab(current_api_key, model)
