@@ -991,7 +991,7 @@ def render_social_tab(
     st.subheader("画像・動画制作用プロンプト")
     st.info(
         "各プロンプトは、1件だけコピーして画像生成AI・動画生成AIへ貼り付けても成立します。"
-        "記事内画像のプロンプトは、完成記事のH2・H3ごとに自動作成しています。"
+        "記事内画像のプロンプトは、重要なH2を中心に最大6枚へ絞って自動作成しています。"
     )
     prompt_tabs = st.tabs(["SNS画像", "カルーセル9枚", "動画", "記事内画像"])
     prompts = plan.get("creative_prompts", {})
