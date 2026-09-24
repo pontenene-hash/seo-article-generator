@@ -1,3 +1,4 @@
+import base64
 import ipaddress
 import json
 import os
@@ -17,6 +18,38 @@ from social_tools import creative_prompt_text, generate_social_plan, social_text
 
 
 st.set_page_config(page_title="SEO記事自動生成", page_icon="✍️", layout="centered")
+
+
+def safe_download_button(
+    label: str,
+    data: bytes | str,
+    file_name: str,
+    mime: str = "application/octet-stream",
+) -> None:
+    """iPhoneでも元のアプリ画面を残したまま保存画面を開く。"""
+    payload = data.encode("utf-8-sig") if isinstance(data, str) else data
+    encoded = base64.b64encode(payload).decode("ascii")
+    safe_label = escape(label)
+    safe_file_name = escape(file_name, quote=True)
+    safe_mime = escape(mime, quote=True)
+    st.markdown(
+        f"""
+        <a href="data:{safe_mime};base64,{encoded}"
+           download="{safe_file_name}"
+           target="_blank"
+           rel="noopener noreferrer"
+           style="display:block;width:100%;box-sizing:border-box;padding:.55rem .75rem;
+                  border:1px solid rgba(49,51,63,.2);border-radius:.5rem;
+                  background:#fff;color:#31333f;text-align:center;text-decoration:none;
+                  font-weight:400;line-height:1.6;">
+          {safe_label}
+        </a>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "iPhoneでは保存画面を新しいタブで開きます。保存後にそのタブを閉じると、元の画面へ戻れます。"
+    )
 
 
 SYSTEM_PROMPT = """あなたは月間100万PV規模のメディアを支援する、日本語SEOコンサルタント兼Webライターです。
@@ -746,21 +779,17 @@ def render_url_tab(current_api_key: Optional[str], model: str) -> None:
             f"# 記事の構成案\n\n{result['outline']}\n\n"
             f"# 完成した本文\n\n{result['article']}\n"
         )
-        st.download_button(
+        safe_download_button(
             "生成結果をMarkdownでダウンロード",
-            data=download_text.encode("utf-8-sig"),
+            data=download_text,
             file_name="url_introduction_article.md",
             mime="text/markdown",
-            use_container_width=True,
-            key="download_url_markdown",
         )
-        st.download_button(
+        safe_download_button(
             "WordPress用HTMLをダウンロード",
-            data=html_article.encode("utf-8-sig"),
+            data=html_article,
             file_name="url_introduction_wordpress.html",
             mime="text/html",
-            use_container_width=True,
-            key="download_url_html",
         )
 
 
@@ -951,13 +980,11 @@ def render_social_tab(
         st.caption(item.get("caption", item.get("description", "")))
         st.write(" ".join(item.get("hashtags", [])))
 
-    st.download_button(
+    safe_download_button(
         "SNS投稿文・構成をテキストでダウンロード",
-        data=social_text(plan).encode("utf-8-sig"),
+        data=social_text(plan),
         file_name="social_posts.txt",
         mime="text/plain",
-        use_container_width=True,
-        key="download_social_text",
     )
 
     st.divider()
@@ -1007,13 +1034,11 @@ def render_social_tab(
                 st.caption(f"推奨保存名：{item.get('output_filename', '')}")
                 st.code(item.get("prompt", ""), language=None, wrap_lines=True)
 
-    st.download_button(
+    safe_download_button(
         "画像・動画制作用プロンプトをまとめてダウンロード",
-        data=creative_prompt_text(plan).encode("utf-8-sig"),
+        data=creative_prompt_text(plan),
         file_name="seo_article_creative_prompts.md",
         mime="text/markdown",
-        use_container_width=True,
-        key="download_creative_prompts",
     )
 
 
@@ -1163,19 +1188,17 @@ with keyword_tab:
             f"# 記事の構成案\n\n{result['outline']}\n\n"
             f"# 完成した本文\n\n{result['article']}\n"
         )
-        st.download_button(
+        safe_download_button(
             "生成結果をMarkdownでダウンロード",
-            data=download_text.encode("utf-8-sig"),
+            data=download_text,
             file_name="seo_article.md",
             mime="text/markdown",
-            use_container_width=True,
         )
-        st.download_button(
+        safe_download_button(
             "WordPress用HTMLをダウンロード",
-            data=html_article.encode("utf-8-sig"),
+            data=html_article,
             file_name="seo_article_wordpress.html",
             mime="text/html",
-            use_container_width=True,
         )
 
 with url_tab:
