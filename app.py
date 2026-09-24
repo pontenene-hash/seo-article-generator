@@ -764,6 +764,45 @@ def render_url_tab(current_api_key: Optional[str], model: str) -> None:
         )
 
 
+def decode_uploaded_article(uploaded_file) -> str:
+    """アップロードされた記事ファイルを文字列へ変換する。"""
+    raw = uploaded_file.getvalue()
+    if len(raw) > 2 * 1024 * 1024:
+        raise ValueError("ファイルサイズが大きすぎます。2MB以下の記事ファイルを選んでください。")
+
+    text = None
+    for encoding in ("utf-8-sig", "utf-8", "cp932", "shift_jis"):
+        try:
+            text = raw.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        raise ValueError("文字コードを判定できません。.md、.txt、.htmlファイルを選んでください。")
+
+    filename = uploaded_file.name.lower()
+    if filename.endswith((".html", ".htm")):
+        soup = BeautifulSoup(text, "html.parser")
+        markdown_lines = []
+        for element in soup.find_all(["h1", "h2", "h3", "p", "li"]):
+            content = element.get_text(" ", strip=True)
+            if not content:
+                continue
+            if element.name in ("h1", "h2", "h3"):
+                level = int(element.name[1])
+                markdown_lines.append(f"{'#' * level} {content}")
+            elif element.name == "li":
+                markdown_lines.append(f"- {content}")
+            else:
+                markdown_lines.append(content)
+        text = "\n\n".join(markdown_lines)
+
+    completed_marker = re.search(r"(?m)^# 完成した本文\s*$", text)
+    if completed_marker:
+        text = text[completed_marker.end() :]
+    return text.strip()
+
+
 def render_social_tab(
     current_api_key: Optional[str],
     model: str,
@@ -778,14 +817,35 @@ def render_social_tab(
         sources["キーワードSEO記事の完成本文"] = st.session_state["seo_result"]["article"]
     if "url_result" in st.session_state:
         sources["URL紹介記事の完成本文"] = st.session_state["url_result"]["article"]
+    sources["記事ファイルをアップロード"] = ""
     sources["記事を直接貼り付ける"] = ""
 
     source_label = st.selectbox("ネタ元の記事", list(sources.keys()), key="social_source")
+    article_default = sources[source_label]
+    article_key = f"social_article_{source_label}"
+    if source_label == "記事ファイルをアップロード":
+        uploaded_article = st.file_uploader(
+            "ダウンロードした記事ファイルを選択",
+            type=["md", "txt", "html", "htm"],
+            key="social_article_upload",
+            help="このアプリからダウンロードした seo_article.md も、そのまま読み込めます。",
+        )
+        if uploaded_article is not None:
+            try:
+                article_default = decode_uploaded_article(uploaded_article)
+                article_key = (
+                    f"social_article_upload_{uploaded_article.name}_{uploaded_article.size}"
+                )
+                st.success(f"{uploaded_article.name} を読み込みました。")
+            except ValueError as exc:
+                st.error(str(exc))
+                article_default = ""
+
     article = st.text_area(
         "SNSへ展開する完成記事",
-        value=sources[source_label],
+        value=article_default,
         height=280,
-        key=f"social_article_{source_label}",
+        key=article_key,
         help="必要に応じて内容を修正してから生成できます。",
     )
     brand_name = st.text_input(
