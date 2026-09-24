@@ -135,8 +135,10 @@ def _image_prompt_item(
         + (f"、補足『{body}』" if body else "")
         + "を一字一句正確に入れる。イラスト領域には人物・背景・小物だけを描き、文字・数字・帯・吹き出しを置かない。"
         "テキスト領域には人物や重要なイラストを置かず、両領域を1ピクセルも越境させない。人物の顔、手、重要な小物を文字で隠さない。"
-        f"フォントは{font_spec}。日本語は意味のまとまりで自然に改行し、助詞・句読点を行頭に置かず、単語の途中で改行しない。"
-        "補足（サブテキスト）のフォントサイズは、見出し（メインテキスト）の約75％にする。"
+        f"フォントは{font_spec}。日本語は文節と意味のまとまりを先に確認してから自然に改行する。"
+        "単語・固有名詞・熟語の途中で分割せず、助詞・句読点・閉じ括弧を行頭に置かない。"
+        "1文字だけの行や短すぎる行を作らず、各行の長さをできるだけ揃える。"
+        "補足（サブテキスト）のフォントサイズは、見出し（メインテキスト）の約80％にする。"
         "文字が収まらない場合はフォントを小さくせず文章を短くする。高コントラストと十分な安全余白を確保する。"
         "生成後にスマートフォン表示で、誤字、文字化け、不自然な改行、領域越境、主役の隠れを検査し、問題があれば修正して再生成する。"
     )
@@ -172,11 +174,11 @@ def _video_prompt_item(
     scene_script = " ".join(scene_lines)
     if vertical:
         layout = "上部コピー帯20％・中央メイン映像55％・下部テロップ帯10％・右端と最下部の操作UI用安全余白15％"
-        font_spec = "太めの日本語ゴシック体。表紙メイン96〜120px、表紙サブはメインの約75％、場面見出し72〜88px、下部補足は見出しの約75％、最大2行、行間1.25〜1.4倍"
+        font_spec = "太めの日本語ゴシック体。表紙メイン96〜120px、表紙サブはメインの約80％、場面見出し72〜88px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
         cta = "最後の5〜7秒は、記事内で確認できる次の行動を自然に案内し、必要に応じてプロフィールのリンクへ誘導する"
     else:
         layout = "人物・映像と文字を左右に分離し、下部に独立した字幕帯を設ける。重要要素は画面端から十分に離す"
-        font_spec = "太めの日本語ゴシック体。表紙メイン88〜112px、表紙サブはメインの約75％、場面見出し64〜80px、下部補足は見出しの約75％、最大2行、行間1.25〜1.4倍"
+        font_spec = "太めの日本語ゴシック体。表紙メイン88〜112px、表紙サブはメインの約80％、場面見出し64〜80px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
         cta = "最後の5〜7秒は、記事内で確認できる次の行動を自然に案内し、必要に応じて概要欄のリンクへ誘導する"
     brand = _plain_text(brand_name, 30)
     brand_rule = f"ブランド名『{brand}』は必要な場合のみ控えめに表示する。" if brand else ""
@@ -189,10 +191,13 @@ def _video_prompt_item(
         "冒頭の黒画面、空白画面、無地背景、読み込み待ち、暗転、黒からのフェードインを一切入れない。"
         "表紙は2.5〜3秒間表示し、記事の要点が一目で伝わる構成にする。"
         f"{font_spec}。上部は場面見出し、下部は具体的な補足説明とし、同じ文章を上下へ重複表示しない。"
-        "下部の補足（サブテキスト）のフォントサイズは、上部の見出し（メインテキスト）の約75％に統一する。"
-        "日本語は意味のまとまりで自然に改行し、助詞・句読点を行頭に置かず、単語の途中で改行しない。"
+        "下部の補足（サブテキスト）のフォントサイズは、上部の見出し（メインテキスト）の約80％に統一する。"
+        "すべての画面テキストは日本語にする。日本語は文節と意味のまとまりを先に確認してから自然に改行する。"
+        "単語・固有名詞・熟語の途中で分割せず、助詞・句読点・閉じ括弧を行頭に置かない。"
+        "1文字だけの行や短すぎる行を作らず、各行の長さをできるだけ揃える。"
         f"場面構成：{scene_script} "
-        "動画全編に、落ち着きと温かみのある聞き取りやすい日本語ナレーションを必ず入れる。"
+        "動画全編のナレーションは日本語だけに統一し、外国語の発話や英語読みを混ぜない。"
+        "声は穏やかで温かみのある成人女性の声に固定し、自然な日本語の発音、落ち着いた速度、聞き取りやすい抑揚で読み上げる。"
         "明るく穏やかで前向きな、著作権上利用可能なインストゥルメンタルBGMを0.0秒から入れる。"
         "柔らかなピアノ、アコースティック、軽いパーカッションを中心にし、暗い、不安、悲しい、重い、激しい曲調は禁止する。"
         "発話中はBGMを自動的に下げ、ナレーションを常に明瞭にする。"
@@ -220,13 +225,13 @@ def _build_creative_prompts(plan: dict, article: str, brand_name: str) -> dict:
     square = "上部25％を見出し、中央55％をイラスト、下部20％を補足専用カードとして3領域を完全分離する"
     vertical = "上部20％を見出し、中央60％をイラスト、下部5％を補足、残り15％を操作UI用安全余白として固定する"
     prompts = {
-        "x_image": _image_prompt_item(x_data.get("title", ""), x_data.get("body", ""), "1200×675", horizontal, "太めゴシック。見出し56〜72px、補足は見出しの約75％、行間1.25〜1.4倍", MEDIA_FILENAMES["x_image"]),
-        "facebook_eyecatch": _image_prompt_item(facebook.get("image_title", ""), facebook.get("image_body", ""), "1200×630", horizontal, "太めゴシック。見出し56〜72px、補足は見出しの約75％、行間1.25〜1.4倍", MEDIA_FILENAMES["facebook_eyecatch"]),
-        "gbp_image": _image_prompt_item(gbp.get("image_title", ""), gbp.get("image_body", ""), "1200×900", horizontal, "太めゴシック。見出し64〜82px、補足は見出しの約75％、行間1.25〜1.4倍", MEDIA_FILENAMES["gbp_image"]),
-        "threads_image": _image_prompt_item(threads.get("image_title", ""), threads.get("image_body", ""), "1080×1080", square, "太めゴシック。見出し64〜80px、補足は見出しの約75％、行間1.25〜1.4倍", MEDIA_FILENAMES["threads_image"]),
-        "reel_cover": _image_prompt_item(reel.get("cover_title", ""), reel.get("cover_body", ""), "1080×1920", vertical, "太めゴシック。見出し72〜96px、補足は見出しの約75％、最大2行", MEDIA_FILENAMES["reel_cover"]),
-        "youtube_thumbnail": _image_prompt_item(youtube.get("thumbnail_title", ""), youtube.get("thumbnail_body", ""), "1280×720", horizontal, "太めゴシック。見出し80〜110px、補足は見出しの約75％、最大2行", MEDIA_FILENAMES["youtube_thumbnail"]),
-        "tiktok_cover": _image_prompt_item(tiktok.get("cover_title", ""), tiktok.get("cover_body", ""), "1080×1920", vertical, "太めゴシック。見出し72〜96px、補足は見出しの約75％、最大2行", MEDIA_FILENAMES["tiktok_cover"]),
+        "x_image": _image_prompt_item(x_data.get("title", ""), x_data.get("body", ""), "1200×675", horizontal, "太めゴシック。見出し56〜72px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["x_image"]),
+        "facebook_eyecatch": _image_prompt_item(facebook.get("image_title", ""), facebook.get("image_body", ""), "1200×630", horizontal, "太めゴシック。見出し56〜72px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["facebook_eyecatch"]),
+        "gbp_image": _image_prompt_item(gbp.get("image_title", ""), gbp.get("image_body", ""), "1200×900", horizontal, "太めゴシック。見出し64〜82px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["gbp_image"]),
+        "threads_image": _image_prompt_item(threads.get("image_title", ""), threads.get("image_body", ""), "1080×1080", square, "太めゴシック。見出し64〜80px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["threads_image"]),
+        "reel_cover": _image_prompt_item(reel.get("cover_title", ""), reel.get("cover_body", ""), "1080×1920", vertical, "太めゴシック。見出し72〜96px、補足は見出しの約80％、最大2行", MEDIA_FILENAMES["reel_cover"]),
+        "youtube_thumbnail": _image_prompt_item(youtube.get("thumbnail_title", ""), youtube.get("thumbnail_body", ""), "1280×720", horizontal, "太めゴシック。見出し80〜110px、補足は見出しの約80％、最大2行", MEDIA_FILENAMES["youtube_thumbnail"]),
+        "tiktok_cover": _image_prompt_item(tiktok.get("cover_title", ""), tiktok.get("cover_body", ""), "1080×1920", vertical, "太めゴシック。見出し72〜96px、補足は見出しの約80％、最大2行", MEDIA_FILENAMES["tiktok_cover"]),
         "reel_video": _video_prompt_item(reel, "1080×1920", "45〜60秒", MEDIA_FILENAMES["reel_video"], True, brand_name),
         "youtube_video": _video_prompt_item(youtube, "1920×1080", "3〜5分", MEDIA_FILENAMES["youtube_video"], False, brand_name),
         "tiktok_video": _video_prompt_item(tiktok, "1080×1920", "45〜60秒", MEDIA_FILENAMES["tiktok_video"], True, brand_name),
@@ -236,7 +241,7 @@ def _build_creative_prompts(plan: dict, article: str, brand_name: str) -> dict:
         item = _image_prompt_item(
             slide.get("title", ""), slide.get("body", ""), "1080×1350",
             "上部18％を見出し、中央57％をイラスト、下部25％を説明カードとして固定し、3領域を完全分離する",
-            "太めゴシック。大見出し64〜80px、説明は大見出しの約75％、最大4行、行間1.25〜1.4倍",
+            "太めゴシック。大見出し64〜80px、説明は大見出しの約80％、最大4行、行間1.25〜1.4倍",
             f"Instagram_カルーセル_{index:02d}.png",
         )
         item["slide"] = index
@@ -249,7 +254,7 @@ def _build_creative_prompts(plan: dict, article: str, brand_name: str) -> dict:
     for index, section in enumerate(sections, 1):
         item = _image_prompt_item(
             section.get("heading", ""), section.get("summary", ""), "1200×675", horizontal,
-            "太めゴシック。見出し56〜72px、補足は見出しの約75％、1行15〜18文字以内、行間1.25〜1.4倍",
+            "太めゴシック。見出し56〜72px、補足は見出しの約80％、1行15〜18文字以内、行間1.25〜1.4倍",
             f"ブログ_{section.get('level', 'H2')}_{index:02d}_{_safe_filename_part(section.get('heading', ''))}.png",
             f"記事の{section.get('level', 'H2')}『{section.get('heading', '')}』。要点：{section.get('summary', '')}",
         )
@@ -295,9 +300,10 @@ def generate_social_plan(client, model: str, article: str, call_llm, brand_name:
 - 同じ文章を使い回さず、媒体ごとに最適化する
 - ハッシュタグは文字列配列にする
 - カルーセルは必ず9枚。1枚目は表紙、9枚目はまとめ・自然な行動喚起
-- リールとTikTokは45〜60秒程度、YouTubeは3〜5分程度の日本語ナレーション
+- リールとTikTokは45〜60秒程度、YouTubeは3〜5分程度。ナレーションは日本語だけで、穏やかで温かみのある成人女性の声を想定する
 - 動画のcaptionは上部に表示する短い場面見出し、narrationは読み上げる自然な文章
 - 上部見出しと下部テロップへ同じ文章を重複させない
+- 画面テキストは日本語の文節と意味のまとまりで自然に改行できる長さにする。単語途中の分割、助詞・句読点の行頭、1文字だけの行を避ける
 - visualは人物、表情、動作、背景、小物が分かる具体的な日本語の場面説明
 - JSONを途中で省略せず、次の形式以外は出力しない
 
