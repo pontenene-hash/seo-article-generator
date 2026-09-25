@@ -183,18 +183,18 @@ def _video_prompt_item(
         narration = _plain_text(scene.get("narration", ""), 240)
         visual = _plain_text(scene.get("visual") or scene.get("direction", ""), 100)
         scene_lines.append(
-            f"シーン{index}：上部見出し『{heading}』。下部補足は見出しを繰り返さず、ナレーションの要点を短く言い換える。"
+            f"シーン{index}（4〜6秒を目安）：上部見出し『{heading}』。下部補足は見出しを繰り返さず、ナレーションの要点を短く言い換える。"
             f"ナレーション『{narration}』。映像は『{visual or narration}』を表す具体的な人物・表情・動作・背景・小物。"
         )
     scene_script = " ".join(scene_lines)
     if vertical:
         layout = "上部コピー帯20％・中央メイン映像55％・下部テロップ帯10％・右端と最下部の操作UI用安全余白15％"
         font_spec = "太めの日本語ゴシック体。表紙メイン96〜120px、表紙サブはメインの約80％、場面見出し72〜88px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
-        cta = "最後の5〜7秒は、記事内で確認できる次の行動を自然に案内し、必要に応じてプロフィールのリンクへ誘導する"
+        cta = "最後の3〜4秒は、記事内で確認できる次の行動を自然に案内し、必要に応じてプロフィールのリンクへ誘導する"
     else:
         layout = "人物・映像と文字を左右に分離し、下部に独立した字幕帯を設ける。重要要素は画面端から十分に離す"
         font_spec = "太めの日本語ゴシック体。表紙メイン88〜112px、表紙サブはメインの約80％、場面見出し64〜80px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
-        cta = "最後の5〜7秒は、記事内で確認できる次の行動を自然に案内し、必要に応じて概要欄のリンクへ誘導する"
+        cta = "最後の3〜4秒は、記事内で確認できる次の行動を自然に案内し、必要に応じて概要欄のリンクへ誘導する"
     brand = _plain_text(brand_name, 30)
     brand_rule = f"ブランド名『{brand}』は必要な場合のみ控えめに表示する。" if brand else ""
     prompt = (
@@ -204,18 +204,20 @@ def _video_prompt_item(
         f"出力は{size}、長さは{duration}。{layout}。全フレームで境界を固定し、文字・帯・字幕を映像領域へ越境させない。"
         "再生開始0.0秒の最初のフレームから、完成した表紙イラストと短いキャッチコピーを明るく鮮明に表示する。"
         "冒頭の黒画面、空白画面、無地背景、読み込み待ち、暗転、黒からのフェードインを一切入れない。"
-        "表紙は2.5〜3秒間表示し、記事の要点が一目で伝わる構成にする。"
+        "表紙は1.5〜2秒間表示し、記事の要点が一目で伝わった時点ですぐ本編へ進む。"
         f"{font_spec}。上部は場面見出し、下部は具体的な補足説明とし、同じ文章を上下へ重複表示しない。"
         "下部の補足（サブテキスト）のフォントサイズは、上部の見出し（メインテキスト）の約80％に統一する。"
         f"すべての画面テキストは日本語にする。{TEXT_LAYOUT_RULES}"
         f"場面構成：{scene_script} "
         "動画全編のナレーションは日本語だけに統一し、外国語の発話や英語読みを混ぜない。"
-        "声は穏やかで温かみのある成人女性の声に固定し、自然な日本語の発音、落ち着いた速度、聞き取りやすい抑揚で読み上げる。"
+        "声は穏やかで温かみのある成人女性の声に固定し、自然な日本語の発音と聞き取りやすい抑揚を保ちながら、通常より少しテンポよく読み上げる。"
+        "不要な間、長い息継ぎ、語尾を長く伸ばす読み方を避ける。1つのナレーションが終わってから次のナレーションが始まるまでの間は最大0.3秒とする。"
+        "ナレーション終了を待って映像を止めず、次のテロップと映像を直ちに開始する。場面転換は0.2〜0.4秒で行い、静止画が3秒以上変化しない状態を作らない。"
         "明るく穏やかで前向きな、著作権上利用可能なインストゥルメンタルBGMを0.0秒から入れる。"
         "柔らかなピアノ、アコースティック、軽いパーカッションを中心にし、暗い、不安、悲しい、重い、激しい曲調は禁止する。"
         "発話中はBGMを自動的に下げ、ナレーションを常に明瞭にする。"
-        "映像・テロップ・ナレーションを同期し、終了時だけ自然にフェードアウトする。"
-        "無音、音切れ、声がBGMに埋もれる状態、冒頭の黒フレームは禁止し、問題があれば再生成する。"
+        "BGMは場面転換中も途切れさせず、映像・テロップ・ナレーションを同期し、終了時だけ自然にフェードアウトする。"
+        "0.5秒を超える無音、意味のない静止、音切れ、声がBGMに埋もれる状態、冒頭の黒フレームは禁止し、問題があれば再生成する。"
         f"{cta}。{brand_rule} Instagram、YouTube、TikTok、X、FacebookなどのSNS名、SNSロゴ、アプリアイコン、"
         "ユーザー名、保存ファイル名、拡張子、透かしを画面に表示しない。不自然な身体変形、激しい点滅、過剰な動きを避ける。"
         "映像の検品では、上下テキストの重複、ナレーションと映像の同期、音声の有無、BGM音量も確認する。"
@@ -246,9 +248,9 @@ def _build_creative_prompts(plan: dict, article: str, brand_name: str) -> dict:
         "reel_cover": _image_prompt_item(reel.get("cover_title", ""), reel.get("cover_body", ""), "1080×1920", vertical, "太めゴシック。見出し72〜96px、補足は見出しの約80％、最大2行", MEDIA_FILENAMES["reel_cover"]),
         "youtube_thumbnail": _image_prompt_item(youtube.get("thumbnail_title", ""), youtube.get("thumbnail_body", ""), "1280×720", horizontal, "太めゴシック。見出し80〜110px、補足は見出しの約80％、最大2行", MEDIA_FILENAMES["youtube_thumbnail"]),
         "tiktok_cover": _image_prompt_item(tiktok.get("cover_title", ""), tiktok.get("cover_body", ""), "1080×1920", vertical, "太めゴシック。見出し72〜96px、補足は見出しの約80％、最大2行", MEDIA_FILENAMES["tiktok_cover"]),
-        "reel_video": _video_prompt_item(reel, "1080×1920", "45〜60秒", MEDIA_FILENAMES["reel_video"], True, brand_name),
-        "youtube_video": _video_prompt_item(youtube, "1920×1080", "約1分（55〜60秒）", MEDIA_FILENAMES["youtube_video"], False, brand_name),
-        "tiktok_video": _video_prompt_item(tiktok, "1080×1920", "45〜60秒", MEDIA_FILENAMES["tiktok_video"], True, brand_name),
+        "reel_video": _video_prompt_item(reel, "1080×1920", "40〜45秒", MEDIA_FILENAMES["reel_video"], True, brand_name),
+        "youtube_video": _video_prompt_item(youtube, "1920×1080", "40〜45秒", MEDIA_FILENAMES["youtube_video"], False, brand_name),
+        "tiktok_video": _video_prompt_item(tiktok, "1080×1920", "40〜45秒", MEDIA_FILENAMES["tiktok_video"], True, brand_name),
     }
     prompts["instagram_carousel"] = []
     for index, slide in enumerate(plan.get("carousel", {}).get("slides", [])[:9], 1):
@@ -314,7 +316,9 @@ def generate_social_plan(client, model: str, article: str, call_llm, brand_name:
 - 同じ文章を使い回さず、媒体ごとに最適化する
 - ハッシュタグは文字列配列にする
 - カルーセルは必ず9枚。1枚目は表紙、9枚目はまとめ・自然な行動喚起
-- リールとTikTokは45〜60秒程度、YouTubeも約1分（55〜60秒）。ナレーションは日本語だけで、穏やかで温かみのある成人女性の声を想定する
+- リール、TikTok、YouTubeはいずれも40〜45秒程度。各動画は5〜7シーン、1シーン4〜6秒を目安にする
+- ナレーションは日本語だけで、穏やかで温かみのある成人女性の声を想定し、通常より少しテンポよい短文にする
+- 各ナレーションの間を最大0.3秒にできる構成とし、不要な間や長い余韻を作らない
 - 動画のcaptionは上部に表示する短い場面見出し、narrationは読み上げる自然な文章
 - 上部見出しと下部テロップへ同じ文章を重複させない
 - 画面テキストは日本語の文節と意味のまとまりで自然に改行できる長さにする。単語途中の分割、助詞・句読点の行頭、1文字だけの行を避ける
