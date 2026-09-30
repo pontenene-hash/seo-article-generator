@@ -1,6 +1,8 @@
 import json
 import re
 
+from creative_quality import COMMON_QUALITY, apply_quality_rules
+
 
 MEDIA_FILENAMES = {
     "x_image": "X_投稿画像.png",
@@ -167,8 +169,8 @@ def _image_prompt_item(
     filename: str,
     scene: str = "",
 ) -> dict:
-    title = _plain_text(title, 22) or "記事のポイント"
-    body = _plain_text(body, 55)
+    title = _plain_text(title, 10000) or "記事のポイント"
+    body = _plain_text(body, 10000)
     visual_direction = _plain_text(scene or f"{title}。{body}", 180)
     prompt = (
         "キャンバスをイラスト表示エリアとテキスト専用エリアの2領域へ完全分離する。"
@@ -181,7 +183,7 @@ def _image_prompt_item(
         "テキスト領域には人物や重要なイラストを置かず、両領域を1ピクセルも越境させない。人物の顔、手、重要な小物を文字で隠さない。"
         f"フォントは{font_spec}。{TEXT_LAYOUT_RULES}"
         "補足（サブテキスト）のフォントサイズは、見出し（メインテキスト）の約80％にする。"
-        "文字が収まらない場合はフォントを小さくせず文章を短くする。高コントラストと十分な安全余白を確保する。"
+        "文字が収まらない場合は領域を広げるか意味を保った短文に推敲し、正式名称は短縮しない。高コントラストと十分な安全余白を確保する。"
         f"{PROFESSIONAL_REVIEW}"
     )
     return {
@@ -206,8 +208,8 @@ def _video_prompt_item(
     scene_lines = []
     for index, raw_scene in enumerate(plan_item.get("scenes", []), 1):
         scene = raw_scene if isinstance(raw_scene, dict) else {}
-        heading = _plain_text(scene.get("caption", ""), 22)
-        telop_text = _plain_text(scene.get("narration", ""), 120)
+        heading = _plain_text(scene.get("caption", ""), 10000)
+        telop_text = _plain_text(scene.get("narration", ""), 10000)
         visual = _plain_text(scene.get("visual") or scene.get("direction", ""), 100)
         scene_lines.append(
             f"シーン{index}（4〜6秒を目安）：上部見出し『{heading}』。"
@@ -218,14 +220,14 @@ def _video_prompt_item(
         )
     scene_script = " ".join(scene_lines)
     if vertical:
-        layout = "上部コピー帯20％・中央メイン映像55％・下部テロップ帯10％・右端と最下部の操作UI用安全余白15％"
+        layout = "上部コピー帯20％・中央メイン映像55％・下部テロップ帯10％・上下左右の操作UI用安全余白を確保し、合計15％を目安に実際のUI位置に合わせて調整"
         font_spec = "太めの日本語ゴシック体。表紙メイン96〜120px、表紙サブはメインの約80％、場面見出し72〜88px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
         cta = "最後の3〜4秒は、記事内で確認できる次の行動を自然に案内し、必要に応じてプロフィールのリンクへ誘導する"
     else:
         layout = "人物・映像と文字を左右に分離し、下部に独立した字幕帯を設ける。重要要素は画面端から十分に離す"
         font_spec = "太めの日本語ゴシック体。表紙メイン88〜112px、表紙サブはメインの約80％、場面見出し64〜80px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
         cta = "最後の3〜4秒は、記事内で確認できる次の行動を自然に案内し、必要に応じて概要欄のリンクへ誘導する"
-    brand = _plain_text(brand_name, 30)
+    brand = str(brand_name or "").strip()
     brand_rule = f"ブランド名『{brand}』は必要な場合のみ控えめに表示する。" if brand else ""
     prompt = (
         "各フレームを映像表示エリアとテロップ専用エリアへ完全分離する。"
@@ -313,7 +315,7 @@ def _build_creative_prompts(plan: dict, article: str, brand_name: str) -> dict:
         )
         item.update({"section": index, "heading_level": section.get("level", "H2"), "heading": section.get("heading", "")})
         prompts["article_section_images"].append(item)
-    return prompts
+    return apply_quality_rules(prompts, brand_name)
 
 
 def _validate_social_plan(data: dict) -> None:
@@ -341,6 +343,9 @@ def generate_social_plan(client, model: str, article: str, call_llm, brand_name:
 あなたは、読者心理・購買行動・媒体特性を熟知したプロのマーケティングコンサルタントであり、
 広告・出版分野で経験豊富なプロのイラストレーター兼映像ディレクターです。
 以下の完成記事だけを情報源として、各SNS向けコンテンツをJSONで作成してください。
+指定の正式名称：{brand_name or "記事内の正式表記に従う"}
+制作時の共通基準（JSONの見出し・説明・場面指定にも反映）：
+{COMMON_QUALITY}
 
 完成記事：
 ---
@@ -361,7 +366,7 @@ def generate_social_plan(client, model: str, article: str, call_llm, brand_name:
 - 人の声や音声ナレーションは使用しない。narration欄には、動画内でタイピング風に表示する日本語テロップ本文を入れる
 - テロップ本文は1シーンで読み切れる45文字以内の短文にし、見出しと同じ文章を繰り返さない
 - テロップ間の空白を最大0.2秒にできる構成とし、不要な間や長い余韻を作らない
-- 動画のcaptionは上部に表示する短い場面見出し、narrationは読み上げる自然な文章
+- 動画のcaptionは上部に表示する短い場面見出し、narrationは音声にせず表示する自然なテロップ文章
 - 上部見出しと下部テロップへ同じ文章を重複させない
 - 画面テキストは日本語の文節と意味のまとまりで自然に改行できる長さにする。単語途中の分割、助詞・句読点の行頭、1文字だけの行を避ける
 - 改行後は各行の見た目の長さが近くなり、中央揃えで視覚的な重心が偏らない短文にする
